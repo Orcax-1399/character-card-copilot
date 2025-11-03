@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onMounted } from 'vue';
 import type { CharacterData } from '@/types/character';
 
 const props = defineProps<{
@@ -12,6 +13,26 @@ const emit = defineEmits<{
 function handleClick() {
   emit('click', props.character.uuid);
 }
+
+function handleImageError(event: Event) {
+  // 图片加载失败时隐藏图片，显示默认占位符
+  const img = event.target as HTMLImageElement;
+  img.style.display = 'none';
+
+  // 添加调试信息
+  console.error('Failed to load character image:', {
+    backgroundPath: props.character.backgroundPath,
+    startsWithData: props.character.backgroundPath.startsWith('data:'),
+    length: props.character.backgroundPath.length
+  });
+}
+
+onMounted(() => {
+  console.log(`CharacterCard mounted for ${props.character.card.data.name}:`, {
+    backgroundPath: props.character.backgroundPath,
+    isBase64: props.character.backgroundPath.startsWith('data:')
+  });
+});
 </script>
 
 <template>
@@ -22,15 +43,19 @@ function handleClick() {
     <div class="aspect-[3/4] relative bg-gray-200">
       <img
         v-if="character.backgroundPath"
-        :src="character.backgroundPath"
+        :src="character.backgroundPath.startsWith('data:') ? character.backgroundPath : `file://${character.backgroundPath}`"
         :alt="character.card.data.name"
         class="w-full h-full object-cover"
+        @error="handleImageError"
       />
       <div
         v-else
         class="w-full h-full flex items-center justify-center text-gray-400"
       >
-        <span>暂无图片</span>
+        <div class="text-center">
+          <div class="text-4xl mb-2">👤</div>
+          <span class="text-sm">暂无图片</span>
+        </div>
       </div>
     </div>
     <div class="p-4">

@@ -112,3 +112,17 @@ export async function uploadBackgroundImage(uuid: string, file: File): Promise<s
     throw new Error(error as string);
   }
 }
+
+/**
+ * 更新角色背景图片路径
+ * @param uuid 角色UUID
+ * @param backgroundPath 背景图片路径
+ */
+export async function updateCharacterBackgroundPath(uuid: string, backgroundPath: string): Promise<void> {
+  try {
+    await invoke('update_character_background_path', { uuid, backgroundPath });
+  } catch (error) {
+    console.error('更新角色背景图片路径失败:', error);
+    throw new Error(error as string);
+  }
+}

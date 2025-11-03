@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
 use super::file_utils::FileUtils;
 
 /// 角色卡元数据
@@ -46,7 +45,7 @@ pub struct CharacterData {
     pub uuid: String,
     pub meta: CharacterMeta,
     pub card: TavernCardV2,
-    pub background_path: String,
+    pub backgroundPath: String,
 }
 
 /// 角色卡存储服务
@@ -77,6 +76,35 @@ impl CharacterStorage {
         Ok(backgrounds_dir)
     }
 
+    /// 将图片路径转换为base64格式
+    fn convert_image_path_to_base64(imagePath: &str) -> String {
+        if imagePath.starts_with("data:") {
+            // 已经是base64格式
+            return imagePath.to_string();
+        }
+
+        // 如果是文件路径，转换为base64
+        if let Ok(image_data) = fs::read(imagePath) {
+            let base64_data = base64::encode(&image_data);
+            // 根据文件扩展名确定mime类型
+            if let Some(extension) = std::path::Path::new(imagePath).extension().and_then(|s| s.to_str()) {
+                let mime_type = match extension.to_lowercase().as_str() {
+                    "png" => "image/png",
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "webp" => "image/webp",
+                    _ => "image/png",
+                };
+                format!("data:{};base64,{}", mime_type, base64_data)
+            } else {
+                // 如果无法确定扩展名，默认为png
+                format!("data:image/png;base64,{}", base64_data)
+            }
+        } else {
+            // 如果无法读取文件，返回空字符串
+            String::new()
+        }
+    }
+
     /// 获取所有角色卡列表
     pub fn get_all_characters(app_handle: &tauri::AppHandle) -> Result<Vec<CharacterData>, String> {
         let characters_dir = Self::get_characters_dir(app_handle)?;
@@ -96,7 +124,11 @@ impl CharacterStorage {
                 let card_file = path.join("card.json");
                 if card_file.exists() {
                     match FileUtils::read_json_file::<CharacterData>(&card_file) {
-                        Ok(character) => characters.push(character),
+                        Ok(mut character) => {
+                            // 转换图片路径为base64格式
+                            character.backgroundPath = Self::convert_image_path_to_base64(&character.backgroundPath);
+                            characters.push(character);
+                        },
                         Err(e) => eprintln!("Failed to load character from {}: {}", card_file.display(), e),
                     }
                 }
@@ -114,7 +146,9 @@ impl CharacterStorage {
             return Ok(None);
         }
 
-        let character = FileUtils::read_json_file::<CharacterData>(&card_file)?;
+        let mut character = FileUtils::read_json_file::<CharacterData>(&card_file)?;
+        // 转换图片路径为base64格式
+        character.backgroundPath = Self::convert_image_path_to_base64(&character.backgroundPath);
         Ok(Some(character))
     }
 
@@ -155,7 +189,7 @@ impl CharacterStorage {
             uuid: uuid.clone(),
             meta,
             card,
-            background_path: String::new(),
+            backgroundPath: String::new(),
         };
 
         // 保存角色卡文件
@@ -225,9 +259,37 @@ impl CharacterStorage {
         let file_name = format!("{}_background.{}", uuid, extension);
         let file_path = backgrounds_dir.join(&file_name);
 
+        // 保存图片文件
         fs::write(&file_path, image_data)
             .map_err(|e| format!("Failed to write background image: {}", e))?;
 
-        Ok(file_path.to_string_lossy().to_string())
+        // 转换为base64返回给前端
+        let base64_data = base64::encode(image_data);
+        let mime_type = match extension {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            _ => "image/png", // 默认
+        };
+
+        Ok(format!("data:{};base64,{}", mime_type, base64_data))
+    }
+
+    /// 更新角色背景图片路径
+    pub fn update_character_background_path(app_handle: &tauri::AppHandle, uuid: &str, background_path: &str) -> Result<(), String> {
+        let card_file = Self::get_character_file_path(app_handle, uuid)?;
+
+        if !card_file.exists() {
+            return Err(format!("Character with UUID {} not found", uuid));
+        }
+
+        let mut character_data: CharacterData = FileUtils::read_json_file(&card_file)?;
+
+        // 更新背景路径为base64格式和修改时间
+        character_data.backgroundPath = background_path.to_string();
+        character_data.meta.updated_at = chrono::Utc::now().to_rfc3339();
+
+        FileUtils::write_json_file(&card_file, &character_data)?;
+        Ok(())
     }
 }

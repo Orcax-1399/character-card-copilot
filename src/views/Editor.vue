@@ -8,17 +8,69 @@ import {
 } from "@/services/characterStorage";
 import type { CharacterData, TavernCardV2 } from "@/types/character";
 import AIPanel from "@/components/AIPanel.vue";
+import {
+    uploadBackgroundImage,
+    updateCharacterBackgroundPath,
+} from "@/services/characterStorage";
 
 const appStore = useAppStore();
 const route = useRoute();
-const router = useRouter();
 const isLoading = ref(false);
 const characterUUID = ref<string>("");
 const aiPanelVisible = ref(true);
+const backgroundPath = ref<string>("");
+const isUploading = ref(false);
 
 // 切换AI面板显示状态
 function toggleAIPanel() {
     aiPanelVisible.value = !aiPanelVisible.value;
+}
+
+// 头像上传功能
+async function handleAvatarClick() {
+    if (!characterUUID.value) return;
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/jpg,image/webp";
+
+    input.onchange = async (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+
+        // 检查文件大小 (限制为5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            alert("图片文件大小不能超过5MB");
+            return;
+        }
+
+        isUploading.value = true;
+
+        try {
+            const uploadedPath = await uploadBackgroundImage(
+                characterUUID.value,
+                file,
+            );
+            backgroundPath.value = uploadedPath;
+
+            // 更新角色的background_path字段
+            await updateCharacterBackgroundPath(
+                characterUUID.value,
+                uploadedPath,
+            );
+            console.log("头像上传成功:", uploadedPath);
+
+            // 触发一次自动保存，确保数据同步
+            await autoSave();
+        } catch (error) {
+            console.error("头像上传失败:", error);
+            alert("头像上传失败，请重试");
+        } finally {
+            isUploading.value = false;
+        }
+    };
+
+    input.click();
 }
 
 // 角色数据
@@ -47,6 +99,7 @@ async function loadCharacterData(uuid: string) {
         const character = await getCharacterByUUID(uuid);
         if (character) {
             characterUUID.value = uuid;
+            backgroundPath.value = character.backgroundPath || "";
             // 将TavernCardV2数据映射到表单
             characterData.value = {
                 name: character.card.data.name,
@@ -156,11 +209,42 @@ onMounted(() => {
                         <div class="flex items-center gap-4 mb-4">
                             <!-- 角色卡预览 -->
                             <div
-                                class="w-24 h-24 bg-gradient-to-br from-blue-400 to-purple-500 rounded-lg flex items-center justify-center shadow-lg"
+                                class="w-24 h-24 rounded-lg flex items-center justify-center shadow-lg overflow-hidden cursor-pointer hover:opacity-80 transition-opacity relative"
+                                @click="handleAvatarClick"
+                                :class="isUploading ? 'opacity-50' : ''"
                             >
-                                <span class="text-white text-2xl font-bold"
-                                    >角色</span
+                                <!-- 上传中的加载状态 -->
+                                <div
+                                    v-if="isUploading"
+                                    class="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center"
                                 >
+                                    <div class="text-white text-xs">
+                                        上传中...
+                                    </div>
+                                </div>
+
+                                <!-- 显示上传的图片 -->
+                                <img
+                                    v-if="backgroundPath"
+                                    :src="backgroundPath.startsWith('data:') ? backgroundPath : `file://${backgroundPath}`"
+                                    alt="角色头像"
+                                    class="w-full h-full object-cover"
+                                />
+
+                                <!-- 默认头像 -->
+                                <div
+                                    v-else
+                                    class="w-full h-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center"
+                                >
+                                    <span class="text-white text-2xl font-bold"
+                                        >角色</span
+                                    >
+                                </div>
+                            </div>
+
+                            <!-- 上传提示 -->
+                            <div class="text-xs text-gray-500">
+                                点击头像上传图片
                             </div>
 
                             <!-- 角色名 -->
@@ -191,7 +275,7 @@ onMounted(() => {
                                 v-model="characterData.description"
                                 @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="3"
+                                rows="5"
                                 placeholder="角色的物理外观、身份和基本设定"
                             ></textarea>
                         </div>
@@ -205,7 +289,7 @@ onMounted(() => {
                                 v-model="characterData.personality"
                                 @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="4"
+                                rows="6"
                                 placeholder="描述角色的性格特征"
                             ></textarea>
                         </div>
@@ -233,7 +317,7 @@ onMounted(() => {
                                 v-model="characterData.first_mes"
                                 @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="3"
+                                rows="4"
                                 placeholder="角色的第一句话或开场问候"
                             ></textarea>
                         </div>
@@ -245,6 +329,7 @@ onMounted(() => {
                             >
                             <textarea
                                 v-model="characterData.mes_example"
+                                @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
                                 rows="6"
                                 placeholder="示例对话格式，展示角色的说话风格"
@@ -258,6 +343,7 @@ onMounted(() => {
                             >
                             <textarea
                                 v-model="characterData.creator_notes"
+                                @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
                                 rows="4"
                                 placeholder="创作时的备注和说明"
@@ -271,6 +357,7 @@ onMounted(() => {
                             >
                             <textarea
                                 v-model="characterData.system_prompt"
+                                @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
                                 rows="4"
                                 placeholder="AI系统使用的提示词"
@@ -286,6 +373,7 @@ onMounted(() => {
                                 v-model="
                                     characterData.post_history_instructions
                                 "
+                                @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
                                 rows="3"
                                 placeholder="对话历史后的处理指令"
@@ -299,6 +387,7 @@ onMounted(() => {
                             >
                             <textarea
                                 v-model="characterData.alternate_greetings"
+                                @blur="autoSave"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
                                 rows="3"
                                 placeholder="备用开场白，用换行分隔多个问候语"
@@ -312,6 +401,7 @@ onMounted(() => {
                             >
                             <input
                                 v-model="characterData.tags"
+                                @blur="autoSave"
                                 type="text"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
                                 placeholder="角色标签，用逗号分隔"
@@ -325,6 +415,7 @@ onMounted(() => {
                             >
                             <input
                                 v-model="characterData.creator"
+                                @blur="autoSave"
                                 type="text"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
                                 placeholder="创作者名称"
@@ -338,6 +429,7 @@ onMounted(() => {
                             >
                             <input
                                 v-model="characterData.character_version"
+                                @blur="autoSave"
                                 type="text"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
                                 placeholder="角色卡版本号"
@@ -352,6 +444,7 @@ onMounted(() => {
                 v-if="aiPanelVisible"
                 :visible="aiPanelVisible"
                 panel-type="ai"
+                :character-data="characterData"
                 @toggle="toggleAIPanel"
             />
 
@@ -362,8 +455,18 @@ onMounted(() => {
                 @click="toggleAIPanel"
             >
                 <div class="text-center text-gray-500">
-                    <svg class="w-6 h-6 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                    <svg
+                        class="w-6 h-6 mx-auto mb-2"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M15 19l-7-7 7-7"
+                        />
                     </svg>
                     <span class="text-xs">显示 AI 面板</span>
                 </div>
