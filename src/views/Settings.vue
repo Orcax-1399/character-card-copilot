@@ -4,6 +4,7 @@ import { useAppStore } from "@/stores/app";
 import type { ApiConfig, ApiTestResult } from "@/types/api";
 import ApiList from "@/components/ApiList.vue";
 import ModelSelect from "@/components/ModelSelect.vue";
+import { copyApiConfig } from "@/services/apiConfig";
 
 const appStore = useAppStore();
 const selectedApi = ref<ApiConfig | null>(null);
@@ -61,6 +62,18 @@ function handleSetDefault() {
         selectedApi.value.default = true;
     }
 }
+
+async function handleCopyConfig(api: ApiConfig) {
+    try {
+        const newApi = await copyApiConfig(api);
+        // 重新加载API列表
+        console.log("复制配置成功:", newApi);
+        // TODO: 这里应该触发重新加载API列表
+    } catch (error) {
+        console.error("复制配置失败:", error);
+        alert("复制配置失败，请重试");
+    }
+}
 </script>
 
 <template>
@@ -82,6 +95,7 @@ function handleSetDefault() {
                         <ApiList
                             @select="handleSelectApi"
                             @testConnection="handleTestConnection"
+                            @copy="handleCopyConfig"
                         />
                     </div>
                 </div>

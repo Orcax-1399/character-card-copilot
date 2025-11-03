@@ -14,6 +14,7 @@ const emit = defineEmits<{
   setDefault: [profile: string];
   toggleEnabled: [profile: string, enabled: boolean];
   testConnection: [result: ApiTestResult];
+  copy: [api: ApiConfig];
 }>();
 
 const testing = ref(false);
@@ -34,12 +35,7 @@ function handleSetDefault() {
 }
 
 function handleCopyConfig() {
-  const configText = JSON.stringify(props.api, null, 2);
-  navigator.clipboard.writeText(configText).then(() => {
-    console.log('API配置已复制到剪贴板');
-  }).catch((err) => {
-    console.error('复制失败:', err);
-  });
+  emit('copy', props.api);
 }
 
 async function handleTestConnection() {

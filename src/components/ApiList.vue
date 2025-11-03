@@ -8,6 +8,7 @@ import NewApiDialog from './NewApiDialog.vue';
 const emit = defineEmits<{
   select: [api: ApiConfig];
   testConnection: [result: ApiTestResult];
+  copy: [api: ApiConfig];
 }>();
 
 const apis = ref<ApiConfig[]>([]);
@@ -61,6 +62,10 @@ function handleTestConnection(result: ApiTestResult) {
   emit('testConnection', result);
 }
 
+function handleCopyApi(api: ApiConfig) {
+  emit('copy', api);
+}
+
 function handleNewApiCreated(api: ApiConfig) {
   apis.value.push(api);
   showNewApiDialog.value = false;
@@ -83,6 +88,7 @@ function handleNewApiCreated(api: ApiConfig) {
         @setDefault="handleSetDefault"
         @toggleEnabled="handleToggleEnabled"
         @testConnection="handleTestConnection"
+        @copy="handleCopyApi"
       />
 
       <!-- 新建API按钮 -->

@@ -150,3 +150,20 @@ export async function fetchModels(config: ApiConfig): Promise<ModelInfo[]> {
     throw new Error(error instanceof Error ? error.message : 'Failed to fetch models');
   }
 }
+
+/**
+ * 复制API配置
+ * @param api 要复制的API配置
+ */
+export async function copyApiConfig(api: ApiConfig): Promise<ApiConfig> {
+  const copyConfig: CreateApiRequest = {
+    profile: `${api.profile} (copy)`,
+    endpoint: api.endpoint,
+    key: api.key,
+    model: api.model,
+    default: false, // 复制的配置不能是默认
+    enabled: api.enabled, // 保持原有的启用状态
+  };
+
+  return await createApiConfig(copyConfig);
+}
