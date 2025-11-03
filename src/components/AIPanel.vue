@@ -13,6 +13,7 @@ import { AIChatService, type ChatCompletionOptions } from "@/services/aiChat";
 import { AIToolsService } from "@/services/aiTools";
 import { ChatHistoryManager } from "@/services/chatHistory";
 import type { ChatMessage } from "@/types/api";
+import { listen } from '@tauri-apps/api/event';
 
 // 组件props
 const props = defineProps<{
@@ -56,6 +57,9 @@ const defaultRole = ref("");
 // 输入框自适应高度
 const textareaRef = ref<HTMLTextAreaElement>();
 const inputRows = ref(1);
+
+// 聊天容器引用
+const chatMessagesRef = ref<HTMLElement>();
 
 // 编辑相关状态
 const editingContent = ref("");
@@ -285,10 +289,10 @@ async function simulateAIResponse() {
             props.characterData,
         );
 
-        // 获取工具
-        const tools = currentRoleConfig.value.tools_enabled
-            ? await convertToolsToChatTools()
-            : undefined;
+        // 获取工具（临时强制启用工具进行测试）
+        const tools = await convertToolsToChatTools(); // currentRoleConfig.value.tools_enabled
+            // ? await convertToolsToChatTools()
+            // : undefined;
 
         // 构建聊天完成选项
         const options: ChatCompletionOptions = {
@@ -306,6 +310,7 @@ async function simulateAIResponse() {
             messageCount: chatMessages.length,
             toolsEnabled: currentRoleConfig.value.tools_enabled,
             toolCount: tools?.length || 0,
+            forceEnabledTools: true, // 临时强制启用
         });
 
         // 调用AI服务
@@ -343,11 +348,7 @@ async function simulateAIResponse() {
 
         // 处理工具调用（如果有）
         if (response.choices[0].message.tool_calls) {
-            // TODO: 实现工具调用处理逻辑
-            console.log(
-                "AI建议的工具调用:",
-                response.choices[0].message.tool_calls,
-            );
+            await handleToolCalls(response.choices[0].message.tool_calls);
         }
     } catch (error) {
         console.error("AI调用失败:", error);
@@ -369,7 +370,7 @@ async function convertToolsToChatTools() {
         const tools = await AIToolsService.getAvailableTools();
 
         // 转换为OpenAI格式
-        return tools.map((tool) => ({
+        const convertedTools = tools.map((tool) => ({
             type: "function" as const,
             function: {
                 name: tool.name,
@@ -395,6 +396,9 @@ async function convertToolsToChatTools() {
                 },
             },
         }));
+
+                return convertedTools;
+
     } catch (error) {
         console.error("转换工具失败:", error);
         return undefined;
@@ -415,6 +419,94 @@ function formatTime(date: Date) {
         hour: "2-digit",
         minute: "2-digit",
     });
+}
+
+// 处理AI工具调用
+async function handleToolCalls(toolCalls: any[]) {
+    for (const toolCall of toolCalls) {
+        if (toolCall.type === 'function') {
+            const functionName = toolCall.function.name;
+            let functionArgs;
+
+            try {
+                functionArgs = JSON.parse(toolCall.function.arguments);
+            } catch (error) {
+                console.error("解析工具调用参数失败:", error);
+                continue;
+            }
+
+            try {
+                // 执行工具调用
+                const result = await AIToolsService.executeToolCall({
+                    tool_name: functionName,
+                    parameters: functionArgs,
+                    character_uuid: getCurrentCharacterId() || undefined,
+                    context: props.characterData,
+                });
+
+                console.log("工具执行结果:", result);
+                console.log("工具执行详情:", JSON.stringify(result, null, 2));
+
+                // 将工具执行结果作为消息添加到对话中
+                const toolResultMessage = {
+                    id: generateId(),
+                    role: "assistant" as const,
+                    content: `工具执行结果：${result.success ?
+                        `成功更新了${result.data?.update_count || 0}个字段：${result.data?.updated_fields?.map((f: any) => f.description).join('、') || '未知字段'}` :
+                        `失败：${result.error || '未知错误'}`}`,
+                    timestamp: new Date(),
+                    isEditing: false,
+                };
+
+                messages.value.push(toolResultMessage);
+
+                // 保存工具结果到聊天历史
+                if (chatHistoryManager) {
+                    try {
+                        await chatHistoryManager.saveMessage({
+                            role: "assistant",
+                            content: toolResultMessage.content,
+                            timestamp: toolResultMessage.timestamp.getTime(),
+                        });
+                    } catch (error) {
+                        console.error("保存工具结果失败:", error);
+                    }
+                }
+
+                // 如果工具执行成功，可能需要刷新角色数据
+                if (result.success && props.characterData) {
+                    // 可以通过事件通知父组件刷新数据
+                    // 这里先简单处理，实际可以通过emit通知父组件
+                    console.log("角色数据已更新，建议刷新界面");
+                }
+
+            } catch (error) {
+                console.error("工具执行失败:", error);
+
+                const errorMessage = {
+                    id: generateId(),
+                    role: "assistant" as const,
+                    content: `工具执行失败：${error instanceof Error ? error.message : "未知错误"}`,
+                    timestamp: new Date(),
+                    isEditing: false,
+                };
+
+                messages.value.push(errorMessage);
+
+                if (chatHistoryManager) {
+                    try {
+                        await chatHistoryManager.saveMessage({
+                            role: "assistant",
+                            content: errorMessage.content,
+                            timestamp: errorMessage.timestamp.getTime(),
+                        });
+                    } catch (saveError) {
+                        console.error("保存工具错误消息失败:", saveError);
+                    }
+                }
+            }
+        }
+    }
 }
 
 // 获取当前角色ID
@@ -467,10 +559,7 @@ async function initializeChatHistory() {
                 `为角色 ${props.characterData.name} (ID: ${characterId}) 加载了 ${messages.value.length} 条聊天历史记录`,
             );
 
-            // 自动滚动到底部显示最新消息
-            nextTick(() => {
-                scrollToBottom();
-            });
+            // 自动滚动到底部显示最新消息 - 通过watch处理
         } else {
             console.log(`角色 ${props.characterData.name} 暂无聊天历史记录`);
         }
@@ -492,17 +581,18 @@ watch(
     { immediate: true },
 );
 
-// 滚动到底部
-function scrollToBottom() {
-    // 这里可以添加滚动逻辑，但需要获取DOM引用
-    // 暂时使用简单的setTimeout确保DOM更新完成
-    setTimeout(() => {
-        const chatContainer = document.querySelector(".overflow-y-auto");
-        if (chatContainer) {
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
-    }, 100);
-}
+// 监听消息变化，自动滚动到底部
+watch(
+    () => messages.value.length,
+    () => {
+        nextTick(() => {
+            if (chatMessagesRef.value) {
+                chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight;
+            }
+        });
+    }
+);
+
 
 // 编辑消息
 function editMessage(index: number) {
@@ -634,10 +724,10 @@ async function triggerAIReply(userMessage: string) {
             props.characterData,
         );
 
-        // 获取工具
-        const tools = currentRoleConfig.value.tools_enabled
-            ? await convertToolsToChatTools()
-            : undefined;
+        // 获取工具（临时强制启用工具进行测试）
+        const tools = await convertToolsToChatTools(); // currentRoleConfig.value.tools_enabled
+            // ? await convertToolsToChatTools()
+            // : undefined;
 
         // 构建聊天完成选项
         const options: ChatCompletionOptions = {
@@ -729,9 +819,26 @@ async function regenerateResponse() {
     }
 }
 
-onMounted(() => {
+onMounted(async () => {
     loadApiConfigs();
     loadAIRoles();
+
+    // 监听工具执行事件，用于调试
+    await listen('tool-executed', (event) => {
+        console.log('🔧 工具执行成功:', event.payload);
+        const payload = event.payload as any;
+        if (payload) {
+            console.log(`工具名称: ${payload.tool_name}`);
+            console.log(`角色UUID: ${payload.character_uuid}`);
+            console.log(`更新字段数: ${payload.update_count}`);
+            if (payload.updated_fields && Array.isArray(payload.updated_fields)) {
+                console.log('更新详情:');
+                payload.updated_fields.forEach((field: any) => {
+                    console.log(`  - ${field.field}: ${field.description}`);
+                });
+            }
+        }
+    });
 });
 </script>
 
@@ -809,6 +916,7 @@ onMounted(() => {
 
             <!-- 对话消息区域 -->
             <div
+                ref="chatMessagesRef"
                 class="flex-1 overflow-y-auto mb-4 border border-gray-200 rounded-lg p-4 bg-gray-50"
             >
                 <div

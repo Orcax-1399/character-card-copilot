@@ -5,6 +5,7 @@ mod ai_config;
 mod ai_tools;
 mod ai_chat;
 mod chat_history;
+mod character_state;
 
 use character_storage::{CharacterStorage, CharacterData, TavernCardV2};
 use api_config::{ApiConfigService, ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, ModelInfo};
@@ -12,6 +13,7 @@ use ai_config::{AIConfigService, AIRole};
 use ai_tools::{AIToolService, ToolCallRequest, ToolResult, AITool};
 use ai_chat::{AIChatService, ChatCompletionRequest, ChatCompletionResponse};
 use chat_history::{ChatHistoryManager, ChatMessage};
+use character_state::{set_active_character, get_active_character, clear_active_character, has_active_character};
 
 // ====================== 角色卡相关命令 ======================
 
@@ -152,8 +154,8 @@ async fn get_tools_by_category(category: String) -> Result<Vec<AITool>, String> 
 }
 
 #[tauri::command]
-async fn execute_tool_call(request: ToolCallRequest) -> Result<ToolResult, String> {
-    Ok(AIToolService::execute_tool_call(request).await)
+async fn execute_tool_call(app_handle: tauri::AppHandle, request: ToolCallRequest) -> Result<ToolResult, String> {
+    Ok(AIToolService::execute_tool_call(&app_handle, request).await)
 }
 
 #[tauri::command]
@@ -165,10 +167,11 @@ async fn get_tool_categories() -> Result<Vec<&'static str>, String> {
 
 #[tauri::command]
 async fn create_chat_completion(
+    app: tauri::AppHandle,
     api_config: ApiConfig,
     request: ChatCompletionRequest,
 ) -> Result<ChatCompletionResponse, String> {
-    AIChatService::create_chat_completion(&api_config, &request).await
+    AIChatService::create_chat_completion(&api_config, &request, Some(&app)).await
 }
 
 #[tauri::command]
@@ -305,6 +308,11 @@ pub fn run() {
             update_chat_message,
             get_last_chat_message,
             get_recent_chat_messages,
+            // 角色状态管理命令
+            set_active_character,
+            get_active_character,
+            clear_active_character,
+            has_active_character,
             // 通用命令
             generate_uuid
         ])

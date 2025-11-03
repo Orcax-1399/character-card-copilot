@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
+use crate::character_storage::{CharacterStorage, TavernCardV2};
 
 /// AI工具参数定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,7 @@ pub struct ToolResult {
 pub struct ToolCallRequest {
     pub tool_name: String,
     pub parameters: HashMap<String, Value>,
+    pub character_uuid: Option<String>, // 角色UUID
     pub context: Option<Value>, // CharacterData or other context
 }
 
@@ -46,129 +49,116 @@ impl AIToolService {
     /// 获取所有可用工具
     pub fn get_available_tools() -> Vec<AITool> {
         vec![
-            // 角色相关工具
+            // 角色编辑工具 - 直接对应TavernCardV2字段
             AITool {
-                name: "update_character_field".to_string(),
-                description: "更新角色的特定字段".to_string(),
+                name: "edit_character".to_string(),
+                description: "直接编辑角色卡字段。使用方法：将要更新的字段作为参数传入，例如要更新description字段，就直接传入description参数。不需要指定角色名称，系统会自动使用当前角色。支持的参数：name, description, personality, scenario, first_mes, mes_example, creator_notes, system_prompt, post_history_instructions, alternate_greetings(换行分隔), tags(逗号分隔), creator, character_version".to_string(),
                 category: "character".to_string(),
                 parameters: vec![
+                    // 添加一个提示字段，说明至少需要传入一个字段
                     ToolParameter {
-                        name: "field_name".to_string(),
-                        description: "要更新的字段名称 (name, description, personality等)".to_string(),
+                        name: "at_least_one_field".to_string(),
+                        description: "必须提供至少一个要编辑的字段（如description, personality等）".to_string(),
                         parameter_type: "string".to_string(),
                         required: true,
                         schema: Some(serde_json::json!({
                             "type": "string",
-                            "enum": ["name", "description", "personality", "scenario", "first_mes", "mes_example", "creator_notes", "system_prompt", "post_history_instructions", "alternate_greetings", "tags", "creator", "character_version"]
+                            "enum": ["edit_character"]
                         })),
                     },
+                    // 基础字段
                     ToolParameter {
-                        name: "new_value".to_string(),
-                        description: "字段的新值".to_string(),
-                        parameter_type: "string".to_string(),
-                        required: true,
-                        schema: None,
-                    },
-                ],
-                enabled: true,
-            },
-
-            AITool {
-                name: "analyze_character".to_string(),
-                description: "分析角色设定的完整性和一致性".to_string(),
-                category: "analysis".to_string(),
-                parameters: vec![
-                    ToolParameter {
-                        name: "analysis_type".to_string(),
-                        description: "分析类型".to_string(),
-                        parameter_type: "string".to_string(),
-                        required: true,
-                        schema: Some(serde_json::json!({
-                            "type": "string",
-                            "enum": ["completeness", "consistency", "depth", "all"]
-                        })),
-                    },
-                ],
-                enabled: true,
-            },
-
-            // 内容生成工具
-            AITool {
-                name: "generate_dialogue".to_string(),
-                description: "基于角色设定生成对话内容".to_string(),
-                category: "content".to_string(),
-                parameters: vec![
-                    ToolParameter {
-                        name: "scenario".to_string(),
-                        description: "对话场景描述".to_string(),
-                        parameter_type: "string".to_string(),
-                        required: true,
-                        schema: None,
-                    },
-                    ToolParameter {
-                        name: "dialogue_type".to_string(),
-                        description: "对话类型".to_string(),
-                        parameter_type: "string".to_string(),
-                        required: true,
-                        schema: Some(serde_json::json!({
-                            "type": "string",
-                            "enum": ["first_meeting", "casual_chat", "emotional_scene", "conflict", "collaboration"]
-                        })),
-                    },
-                    ToolParameter {
-                        name: "length".to_string(),
-                        description: "对话长度 (短/中/长)".to_string(),
+                        name: "name".to_string(),
+                        description: "角色名称".to_string(),
                         parameter_type: "string".to_string(),
                         required: false,
-                        schema: Some(serde_json::json!({
-                            "type": "string",
-                            "enum": ["short", "medium", "long"],
-                            "default": "medium"
-                        })),
+                        schema: None,
                     },
-                ],
-                enabled: true,
-            },
-
-            AITool {
-                name: "suggest_improvements".to_string(),
-                description: "为角色设定提供改进建议".to_string(),
-                category: "analysis".to_string(),
-                parameters: vec![
                     ToolParameter {
-                        name: "focus_area".to_string(),
-                        description: "重点关注领域".to_string(),
+                        name: "description".to_string(),
+                        description: "角色描述".to_string(),
                         parameter_type: "string".to_string(),
-                        required: true,
-                        schema: Some(serde_json::json!({
-                            "type": "string",
-                            "enum": ["personality", "backstory", "relationships", "goals", "all"]
-                        })),
+                        required: false,
+                        schema: None,
                     },
-                ],
-                enabled: true,
-            },
-
-            // 实用工具
-            AITool {
-                name: "export_character".to_string(),
-                description: "导出角色数据为不同格式".to_string(),
-                category: "utility".to_string(),
-                parameters: vec![
                     ToolParameter {
-                        name: "format".to_string(),
-                        description: "导出格式".to_string(),
+                        name: "personality".to_string(),
+                        description: "性格特点".to_string(),
                         parameter_type: "string".to_string(),
-                        required: true,
-                        schema: Some(serde_json::json!({
-                            "type": "string",
-                            "enum": ["json", "yaml", "tavern", "charx"]
-                        })),
+                        required: false,
+                        schema: None,
                     },
                     ToolParameter {
-                        name: "include_metadata".to_string(),
-                        description: "是否包含元数据".to_string(),
-                        parameter_type: "boolean".to_string(),
+                        name: "scenario".to_string(),
+                        description: "场景设定".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "first_mes".to_string(),
+                        description: "开场白".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "mes_example".to_string(),
+                        description: "对话示例".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "creator_notes".to_string(),
+                        description: "创作者笔记".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "system_prompt".to_string(),
+                        description: "系统提示词".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "post_history_instructions".to_string(),
+                        description: "历史后指令".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+
+                    // 数组字段
+                    ToolParameter {
+                        name: "alternate_greetings".to_string(),
+                        description: "备用问候语，多个问候语用换行分隔".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "tags".to_string(),
+                        description: "标签，多个标签用逗号分隔".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+
+                    // 元信息字段
+                    ToolParameter {
+                        name: "creator".to_string(),
+                        description: "创作者".to_string(),
+                        parameter_type: "string".to_string(),
+                        required: false,
+                        schema: None,
+                    },
+                    ToolParameter {
+                        name: "character_version".to_string(),
+                        description: "角色版本".to_string(),
+                        parameter_type: "string".to_string(),
                         required: false,
                         schema: None,
                     },
@@ -179,15 +169,11 @@ impl AIToolService {
     }
 
     /// 执行工具调用
-    pub async fn execute_tool_call(request: ToolCallRequest) -> ToolResult {
+    pub async fn execute_tool_call(app_handle: &AppHandle, request: ToolCallRequest) -> ToolResult {
         let start_time = std::time::Instant::now();
 
         match request.tool_name.as_str() {
-            "update_character_field" => Self::update_character_field(request).await,
-            "analyze_character" => Self::analyze_character(request).await,
-            "generate_dialogue" => Self::generate_dialogue(request).await,
-            "suggest_improvements" => Self::suggest_improvements(request).await,
-            "export_character" => Self::export_character(request).await,
+            "edit_character" => Self::edit_character(app_handle, &request).await,
             _ => ToolResult {
                 success: false,
                 data: None,
@@ -197,116 +183,186 @@ impl AIToolService {
         }
     }
 
-    /// 更新角色字段
-    async fn update_character_field(request: ToolCallRequest) -> ToolResult {
+    /// 编辑角色字段
+    async fn edit_character(app_handle: &AppHandle, request: &ToolCallRequest) -> ToolResult {
         let start_time = std::time::Instant::now();
 
-        // TODO: 实现角色字段更新逻辑
-        // 这里需要调用 character_storage 模块的功能
+        // 获取角色UUID
+        let character_uuid = match &request.character_uuid {
+            Some(uuid) => uuid.clone(),
+            None => {
+                return ToolResult {
+                    success: false,
+                    data: None,
+                    error: Some("缺少角色UUID".to_string()),
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                };
+            }
+        };
 
-        ToolResult {
-            success: true,
-            data: Some(serde_json::json!({
-                "message": "字段更新成功",
-                "field": request.parameters.get("field_name"),
-                "new_value": request.parameters.get("new_value")
-            })),
-            error: None,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
+        // 获取当前角色数据
+        let character_data = match CharacterStorage::get_character_by_uuid(app_handle, &character_uuid) {
+            Ok(Some(data)) => data,
+            Ok(None) => {
+                return ToolResult {
+                    success: false,
+                    data: None,
+                    error: Some("角色不存在".to_string()),
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                };
+            }
+            Err(e) => {
+                return ToolResult {
+                    success: false,
+                    data: None,
+                    error: Some(format!("获取角色数据失败: {}", e)),
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                };
+            }
+        };
+
+        let mut tavern_card = character_data.card;
+        let mut updated_fields = Vec::new();
+
+        // 遍历所有参数，更新对应的字段（忽略提示字段）
+        for (field_name, field_value) in &request.parameters {
+            // 忽略提示字段
+            if field_name == "at_least_one_field" {
+                continue;
+            }
+
+            if let Some(value_str) = field_value.as_str() {
+                match field_name.as_str() {
+                    "name" => {
+                        tavern_card.data.name = value_str.to_string();
+                        updated_fields.push(("name", "角色名称"));
+                    }
+                    "description" => {
+                        tavern_card.data.description = value_str.to_string();
+                        updated_fields.push(("description", "角色描述"));
+                    }
+                    "personality" => {
+                        tavern_card.data.personality = value_str.to_string();
+                        updated_fields.push(("personality", "性格特点"));
+                    }
+                    "scenario" => {
+                        tavern_card.data.scenario = value_str.to_string();
+                        updated_fields.push(("scenario", "场景设定"));
+                    }
+                    "first_mes" => {
+                        tavern_card.data.first_mes = value_str.to_string();
+                        updated_fields.push(("first_mes", "开场白"));
+                    }
+                    "mes_example" => {
+                        tavern_card.data.mes_example = value_str.to_string();
+                        updated_fields.push(("mes_example", "对话示例"));
+                    }
+                    "creator_notes" => {
+                        tavern_card.data.creator_notes = value_str.to_string();
+                        updated_fields.push(("creator_notes", "创作者笔记"));
+                    }
+                    "system_prompt" => {
+                        tavern_card.data.system_prompt = value_str.to_string();
+                        updated_fields.push(("system_prompt", "系统提示词"));
+                    }
+                    "post_history_instructions" => {
+                        tavern_card.data.post_history_instructions = value_str.to_string();
+                        updated_fields.push(("post_history_instructions", "历史后指令"));
+                    }
+                    "alternate_greetings" => {
+                        tavern_card.data.alternate_greetings = value_str
+                            .split('\n')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        updated_fields.push(("alternate_greetings", "备用问候语"));
+                    }
+                    "tags" => {
+                        tavern_card.data.tags = value_str
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        updated_fields.push(("tags", "标签"));
+                    }
+                    "creator" => {
+                        tavern_card.data.creator = value_str.to_string();
+                        updated_fields.push(("creator", "创作者"));
+                    }
+                    "character_version" => {
+                        tavern_card.data.character_version = value_str.to_string();
+                        updated_fields.push(("character_version", "角色版本"));
+                    }
+                    _ => {
+                        // 忽略未知字段，但记录警告
+                        eprintln!("警告: 未知字段名 '{}' 被忽略", field_name);
+                    }
+                }
+            }
         }
-    }
 
-    /// 分析角色
-    async fn analyze_character(request: ToolCallRequest) -> ToolResult {
-        let start_time = std::time::Instant::now();
-
-        // TODO: 实现角色分析逻辑
-        // 这里可以集成 AI 分析功能
-
-        ToolResult {
-            success: true,
-            data: Some(serde_json::json!({
-                "analysis_type": request.parameters.get("analysis_type"),
-                "completeness_score": 0.85,
-                "consistency_score": 0.92,
-                "suggestions": [
-                    "建议增加更多背景故事",
-                    "性格特点可以更加丰富",
-                    "可以添加一些独特的行为习惯"
-                ]
-            })),
-            error: None,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
+        // 检查是否有字段被更新
+        if updated_fields.is_empty() {
+            return ToolResult {
+                success: false,
+                data: None,
+                error: Some("没有提供有效的字段参数".to_string()),
+                execution_time_ms: start_time.elapsed().as_millis() as u64,
+            };
         }
-    }
 
-    /// 生成对话
-    async fn generate_dialogue(request: ToolCallRequest) -> ToolResult {
-        let start_time = std::time::Instant::now();
+        // 保存更新后的角色数据
+        match CharacterStorage::update_character(app_handle, &character_uuid, &tavern_card) {
+            Ok(()) => {
+                // 发送事件通知前端刷新角色数据
+                if let Err(e) = app_handle.emit("character-updated", serde_json::json!({
+                    "character_uuid": character_uuid,
+                    "updated_fields": updated_fields.iter().map(|(k, _)| k).collect::<Vec<_>>()
+                })) {
+                    eprintln!("发送角色更新事件失败: {}", e);
+                }
 
-        // TODO: 实现对话生成逻辑
-        // 这里可以调用 AI API 生成对话内容
+                // 发送工具调用成功事件，用于调试
+                if let Err(e) = app_handle.emit("tool-executed", serde_json::json!({
+                    "tool_name": "edit_character",
+                    "character_uuid": character_uuid,
+                    "updated_fields": updated_fields.iter().map(|(k, v)| serde_json::json!({
+                        "field": k,
+                        "description": v
+                    })).collect::<Vec<_>>(),
+                    "update_count": updated_fields.len()
+                })) {
+                    eprintln!("发送工具执行事件失败: {}", e);
+                }
 
-        ToolResult {
-            success: true,
-            data: Some(serde_json::json!({
-                "scenario": request.parameters.get("scenario"),
-                "dialogue_type": request.parameters.get("dialogue_type"),
-                "generated_dialogue": "这是一个示例对话内容...",
-                "character_responses": [
-                    "你好，很高兴认识你！",
-                    "今天的天气真不错呢。",
-                    "你想聊些什么呢？"
-                ]
-            })),
-            error: None,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
-        }
-    }
-
-    /// 提供改进建议
-    async fn suggest_improvements(request: ToolCallRequest) -> ToolResult {
-        let start_time = std::time::Instant::now();
-
-        // TODO: 实现改进建议逻辑
-
-        ToolResult {
-            success: true,
-            data: Some(serde_json::json!({
-                "focus_area": request.parameters.get("focus_area"),
-                "improvements": [
-                    "增加角色的内心矛盾",
-                    "丰富角色的背景故事",
-                    "添加一些独特的习惯或癖好",
-                    "明确角色的目标和动机"
-                ]
-            })),
-            error: None,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
-        }
-    }
-
-    /// 导出角色
-    async fn export_character(request: ToolCallRequest) -> ToolResult {
-        let start_time = std::time::Instant::now();
-
-        // TODO: 实现角色导出逻辑
-
-        ToolResult {
-            success: true,
-            data: Some(serde_json::json!({
-                "format": request.parameters.get("format"),
-                "exported_data": "导出的角色数据...",
-                "file_path": "/path/to/exported/file"
-            })),
-            error: None,
-            execution_time_ms: start_time.elapsed().as_millis() as u64,
+                ToolResult {
+                    success: true,
+                    data: Some(serde_json::json!({
+                        "message": "角色字段更新成功",
+                        "updated_fields": updated_fields.iter().map(|(k, v)| serde_json::json!({
+                            "field": k,
+                            "description": v
+                        })).collect::<Vec<_>>(),
+                        "update_count": updated_fields.len()
+                    })),
+                    error: None,
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                }
+            }
+            Err(e) => {
+                ToolResult {
+                    success: false,
+                    data: None,
+                    error: Some(format!("保存角色数据失败: {}", e)),
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                }
+            }
         }
     }
 
     /// 获取工具分类
     pub fn get_tool_categories() -> Vec<&'static str> {
-        vec!["character", "content", "analysis", "utility"]
+        vec!["character"]
     }
 
     /// 根据分类获取工具

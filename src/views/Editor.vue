@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { onMounted, ref, watch, nextTick, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import {
@@ -12,6 +12,8 @@ import {
     uploadBackgroundImage,
     updateCharacterBackgroundPath,
 } from "@/services/characterStorage";
+import { CharacterStateService } from "@/services/characterState";
+import { listen } from '@tauri-apps/api/event';
 
 const appStore = useAppStore();
 const route = useRoute();
@@ -20,6 +22,9 @@ const characterUUID = ref<string>("");
 const aiPanelVisible = ref(true);
 const backgroundPath = ref<string>("");
 const isUploading = ref(false);
+
+// 编辑器容器引用
+const editorContainerRef = ref<HTMLElement>();
 
 // 切换AI面板显示状态
 function toggleAIPanel() {
@@ -177,13 +182,41 @@ watch(
     { immediate: true },
 );
 
-onMounted(() => {
+onMounted(async () => {
     appStore.setPageTitle("角色编辑器", true);
+
+    // 页面加载时滚动到顶部
+    nextTick(() => {
+        if (editorContainerRef.value) {
+            editorContainerRef.value.scrollTop = 0;
+        }
+    });
+
     // 检查路由参数
     const uuid = route.params.uuid as string;
     if (uuid) {
-        loadCharacterData(uuid);
+        await loadCharacterData(uuid);
+        // 设置当前活跃角色
+        await CharacterStateService.setActiveCharacter(uuid);
     }
+
+    // 监听角色更新事件
+    await listen('character-updated', (event) => {
+        console.log('收到角色更新事件:', event.payload);
+        // 检查事件是否针对当前角色
+        if (event.payload && typeof event.payload === 'object' &&
+            'character_uuid' in event.payload &&
+            event.payload.character_uuid === characterUUID.value) {
+            console.log('刷新当前角色数据');
+            // 重新加载角色数据
+            loadCharacterData(characterUUID.value);
+        }
+    });
+});
+
+// 组件卸载时清除活跃角色状态
+onUnmounted(async () => {
+    await CharacterStateService.clearActiveCharacter();
 });
 </script>
 
@@ -192,6 +225,7 @@ onMounted(() => {
         <div class="flex h-full gap-4">
             <!-- 左侧：角色信息显示 -->
             <div
+                ref="editorContainerRef"
                 class="card rounded-xl bg-white p-6 overflow-y-auto shadow-2xl"
                 :class="aiPanelVisible ? 'w-1/2' : 'w-full'"
             >

@@ -19,6 +19,7 @@ export interface AITool {
 export interface ToolCallRequest {
   tool_name: string;
   parameters: Record<string, any>;
+  character_uuid?: string; // 角色UUID
   context?: any; // CharacterData or other context
 }
 
@@ -59,89 +60,32 @@ export class AIToolsService {
   }
 
   /**
-   * 更新角色字段工具
+   * 编辑角色工具 - 主要的AI编辑功能
+   * 参数对应TavernCardV2字段名
    */
-  static async updateCharacterField(
-    fieldName: string,
-    newValue: string,
+  static async editCharacter(
+    characterUuid: string,
+    fields: {
+      name?: string;
+      description?: string;
+      personality?: string;
+      scenario?: string;
+      first_mes?: string;
+      mes_example?: string;
+      creator_notes?: string;
+      system_prompt?: string;
+      post_history_instructions?: string;
+      alternate_greetings?: string; // 用换行分隔
+      tags?: string; // 用逗号分隔
+      creator?: string;
+      character_version?: string;
+    },
     context?: any
   ): Promise<ToolResult> {
     return this.executeToolCall({
-      tool_name: 'update_character_field',
-      parameters: {
-        field_name: fieldName,
-        new_value: newValue,
-      },
-      context,
-    });
-  }
-
-  /**
-   * 分析角色工具
-   */
-  static async analyzeCharacter(
-    analysisType: 'completeness' | 'consistency' | 'depth' | 'all',
-    context?: any
-  ): Promise<ToolResult> {
-    return this.executeToolCall({
-      tool_name: 'analyze_character',
-      parameters: {
-        analysis_type: analysisType,
-      },
-      context,
-    });
-  }
-
-  /**
-   * 生成对话工具
-   */
-  static async generateDialogue(
-    scenario: string,
-    dialogueType: 'first_meeting' | 'casual_chat' | 'emotional_scene' | 'conflict' | 'collaboration',
-    length: 'short' | 'medium' | 'long' = 'medium',
-    context?: any
-  ): Promise<ToolResult> {
-    return this.executeToolCall({
-      tool_name: 'generate_dialogue',
-      parameters: {
-        scenario,
-        dialogue_type: dialogueType,
-        length,
-      },
-      context,
-    });
-  }
-
-  /**
-   * 获取改进建议工具
-   */
-  static async suggestImprovements(
-    focusArea: 'personality' | 'backstory' | 'relationships' | 'goals' | 'all',
-    context?: any
-  ): Promise<ToolResult> {
-    return this.executeToolCall({
-      tool_name: 'suggest_improvements',
-      parameters: {
-        focus_area: focusArea,
-      },
-      context,
-    });
-  }
-
-  /**
-   * 导出角色工具
-   */
-  static async exportCharacter(
-    format: 'json' | 'yaml' | 'tavern' | 'charx',
-    includeMetadata: boolean = true,
-    context?: any
-  ): Promise<ToolResult> {
-    return this.executeToolCall({
-      tool_name: 'export_character',
-      parameters: {
-        format,
-        include_metadata: includeMetadata,
-      },
+      tool_name: 'edit_character',
+      parameters: fields,
+      character_uuid: characterUuid,
       context,
     });
   }

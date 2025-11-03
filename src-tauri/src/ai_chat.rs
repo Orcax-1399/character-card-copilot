@@ -1,10 +1,20 @@
 use async_openai::{
     config::OpenAIConfig,
     types::{
-        ChatCompletionRequestSystemMessageArgs,
-        ChatCompletionRequestUserMessageArgs,
+        ChatCompletionMessageToolCall,
+        ChatCompletionNamedToolChoice,
         ChatCompletionRequestAssistantMessageArgs,
+        ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestToolMessageArgs,
+        ChatCompletionRequestToolMessageContent,
+        ChatCompletionRequestUserMessageArgs,
+        ChatCompletionToolArgs,
+        ChatCompletionToolChoiceOption,
+        ChatCompletionToolType,
         CreateChatCompletionRequestArgs,
+        FunctionCall,
+        FunctionName,
+        FunctionObject,
     },
     Client,
 };
@@ -17,6 +27,7 @@ use super::ai_tools::AITool;
 /// 聊天消息角色 (为前端兼容性保留)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(PartialEq)]
 pub enum MessageRole {
     System,
     User,
@@ -234,19 +245,48 @@ impl AIChatService {
                     user_msg.into()
                 }
                 MessageRole::Assistant => {
-                    let assistant_msg = ChatCompletionRequestAssistantMessageArgs::default()
-                        .content(msg.content.clone())
-                        .build()
-                        .unwrap();
-                    assistant_msg.into()
+                    let mut builder = ChatCompletionRequestAssistantMessageArgs::default();
+
+                    if !msg.content.is_empty() {
+                        builder.content(msg.content.clone());
+                    }
+                    if let Some(name) = &msg.name {
+                        builder.name(name.clone());
+                    }
+                    if let Some(tool_calls) = &msg.tool_calls {
+                        let converted_tool_calls = tool_calls
+                            .iter()
+                            .map(|call| ChatCompletionMessageToolCall {
+                                id: call.id.clone(),
+                                r#type: ChatCompletionToolType::Function,
+                                function: FunctionCall {
+                                    name: call.function.name.clone(),
+                                    arguments: call.function.arguments.clone(),
+                                },
+                            })
+                            .collect::<Vec<_>>();
+                        builder.tool_calls(converted_tool_calls);
+                    }
+
+                    builder.build().unwrap().into()
                 }
                 MessageRole::Tool => {
                     // 对于工具消息，暂时转换为用户消息
-                    let tool_msg = ChatCompletionRequestUserMessageArgs::default()
-                        .content(format!("[Tool Response] {}", msg.content))
-                        .build()
-                        .unwrap();
-                    tool_msg.into()
+                    if let Some(tool_call_id) = &msg.tool_call_id {
+                        let tool_msg = ChatCompletionRequestToolMessageArgs::default()
+                            .content(ChatCompletionRequestToolMessageContent::Text(msg.content.clone()))
+                            .tool_call_id(tool_call_id.clone())
+                            .build()
+                            .unwrap();
+                        tool_msg.into()
+                    } else {
+                        // tool_call_id 丢失时退回为用户消息以避免请求构造失败
+                        ChatCompletionRequestUserMessageArgs::default()
+                            .content(format!("[Tool Response] {}", msg.content))
+                            .build()
+                            .unwrap()
+                            .into()
+                    }
                 }
             };
 
@@ -254,6 +294,60 @@ impl AIChatService {
         }
 
         openai_messages
+    }
+
+    fn convert_tools_to_openai(tools: &[ChatTool]) -> Vec<async_openai::types::ChatCompletionTool> {
+        tools
+            .iter()
+            .filter_map(|tool| {
+                if tool.tool_type != "function" {
+                    return None;
+                }
+
+                let parameters = tool
+                    .function
+                    .parameters
+                    .as_ref()
+                    .and_then(|params| serde_json::to_value(params).ok());
+
+                let function_object = FunctionObject {
+                    name: tool.function.name.clone(),
+                    description: tool.function.description.clone(),
+                    parameters,
+                    strict: None,
+                };
+
+                let mut builder = ChatCompletionToolArgs::default();
+                builder.r#type(ChatCompletionToolType::Function);
+                builder.function(function_object);
+                builder.build().ok()
+            })
+            .collect()
+    }
+
+    fn convert_tool_choice_to_openai(choice: &ToolChoice) -> Option<ChatCompletionToolChoiceOption> {
+        match choice {
+            ToolChoice::String(value) => match value.to_lowercase().as_str() {
+                "none" => Some(ChatCompletionToolChoiceOption::None),
+                "auto" => Some(ChatCompletionToolChoiceOption::Auto),
+                "required" => Some(ChatCompletionToolChoiceOption::Required),
+                _ => None,
+            },
+            ToolChoice::Function { choice_type, function } => {
+                if choice_type.to_lowercase() != "function" {
+                    return None;
+                }
+
+                Some(ChatCompletionToolChoiceOption::Named(
+                    ChatCompletionNamedToolChoice {
+                        r#type: ChatCompletionToolType::Function,
+                        function: FunctionName {
+                            name: function.name.clone(),
+                        },
+                    },
+                ))
+            }
+        }
     }
 
     /// 将 async-openai 响应转换为前端兼容格式
@@ -277,7 +371,20 @@ impl AIChatService {
                         },
                         content: choice.message.content.unwrap_or_default(),
                         name: None, // async-openai 的消息没有 name 字段
-                        tool_calls: None, // 暂时不处理工具调用
+                        tool_calls: if let Some(calls) = &choice.message.tool_calls {
+                        Some(calls.iter().map(|call| {
+                            ToolCallData {
+                                id: call.id.clone(),
+                                call_type: "function".to_string(),
+                                function: ToolCallFunctionData {
+                                    name: call.function.name.clone(),
+                                    arguments: call.function.arguments.clone(),
+                                },
+                            }
+                        }).collect())
+                    } else {
+                        None
+                    },
                         tool_call_id: None,
                     },
                     finish_reason: choice.finish_reason
@@ -359,20 +466,25 @@ impl AIChatService {
     pub async fn create_chat_completion(
         api_config: &ApiConfig,
         request: &ChatCompletionRequest,
+        app_handle: Option<&tauri::AppHandle>,
     ) -> Result<ChatCompletionResponse, String> {
         let client = Self::create_client_with_config(api_config).await?;
+        let mut messages = request.messages.clone();
+        let max_iterations = 5; // 防止无限循环
+        let mut iteration = 0;
 
-        // 转换消息格式
-        let openai_messages = Self::convert_messages_to_openai(&request.messages);
+        loop {
+            if iteration >= max_iterations {
+                return Err("工具调用循环次数超过限制".to_string());
+            }
+            iteration += 1;
 
-        // 构建请求 - 使用更简单的方法
-        let mut request_builder = CreateChatCompletionRequestArgs::default();
+            let openai_messages = Self::convert_messages_to_openai(&messages);
+            let mut request_builder = CreateChatCompletionRequestArgs::default();
 
-        // 必需参数
         request_builder.model(&request.model);
         request_builder.messages(openai_messages);
 
-        // 可选参数
         if let Some(temp) = request.temperature {
             request_builder.temperature(temp as f32);
         }
@@ -388,20 +500,133 @@ impl AIChatService {
         if let Some(pres_penalty) = request.presence_penalty {
             request_builder.presence_penalty(pres_penalty as f32);
         }
-
-        // 暂时不处理工具调用，避免复杂的类型问题
-        // TODO: 后续再实现工具调用功能
+        if let Some(tools) = &request.tools {
+            let converted_tools = Self::convert_tools_to_openai(tools);
+            if !converted_tools.is_empty() {
+                request_builder.tools(converted_tools);
+            }
+        }
+        if let Some(tool_choice) = &request.tool_choice {
+            if let Some(openai_choice) = Self::convert_tool_choice_to_openai(tool_choice) {
+                request_builder.tool_choice(openai_choice);
+            }
+        }
 
         let openai_request = request_builder.build().map_err(|e| {
-            format!("构建请求失败: {}", e)
+            format!("��������ʧ��: {}", e)
         })?;
 
-        // 发送请求
-        let response = client.chat().create(openai_request).await
+        let response = client
+            .chat()
+            .create(openai_request)
+            .await
             .map_err(|e| format!("API请求失败: {}", e))?;
 
-        Ok(Self::convert_response_from_openai(response))
+        let our_response = Self::convert_response_from_openai(response);
+
+        // 检查是否有工具调用需要执行
+        if let Some(choice) = our_response.choices.first() {
+            if let Some(tool_calls) = &choice.message.tool_calls {
+                if !tool_calls.is_empty() {
+                    // 执行工具调用
+                    if let Some(app_handle) = app_handle {
+                        messages.push(choice.message.clone());
+                        for tool_call in tool_calls {
+                            if let Some(tool_result) = Self::execute_single_tool_call(
+                                app_handle,
+                                &tool_call.function.name,
+                                &tool_call.function.arguments,
+                                &messages
+                            ).await {
+                                // 将工具结果添加到消息列表
+                                messages.push(ChatMessage {
+                                    role: MessageRole::Tool,
+                                    content: serde_json::to_string(&tool_result).unwrap_or_default(),
+                                    name: None,
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                });
+                            } else {
+                                // 工具执行失败
+                                messages.push(ChatMessage {
+                                    role: MessageRole::Tool,
+                                    content: serde_json::json!({
+                                        "success": false,
+                                        "error": "Tool execution failed"
+                                    }).to_string(),
+                                    name: None,
+                                    tool_calls: None,
+                                    tool_call_id: Some(tool_call.id.clone()),
+                                });
+                            }
+                        }
+
+                        // 继续循环，将工具结果发送回AI
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // 没有工具调用或工具调用完成，返回结果
+        return Ok(our_response);
     }
+    }
+
+    /// 执行单个工具调用
+    async fn execute_single_tool_call(
+        app_handle: &tauri::AppHandle,
+        tool_name: &str,
+        arguments: &str,
+        _messages: &[ChatMessage],
+    ) -> Option<serde_json::Value> {
+        // 解析参数
+        let params: std::collections::HashMap<String, serde_json::Value> =
+            match serde_json::from_str(arguments) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    return Some(serde_json::json!({
+                        "success": false,
+                        "error": format!("Invalid tool arguments: {}", err)
+                    }));
+                }
+            };
+
+        // 从全局状态管理器获取当前角色UUID
+        let character_uuid = crate::character_state::CHARACTER_STATE.get_current_character();
+
+        // 创建工具调用请求
+        let tool_request = crate::ai_tools::ToolCallRequest {
+            tool_name: tool_name.to_string(),
+            parameters: params,
+            character_uuid,
+            context: None, // 可以考虑添加角色上下文
+        };
+
+        // 执行工具调用
+        let result = crate::ai_tools::AIToolService::execute_tool_call(app_handle, tool_request).await;
+
+        if result.success {
+            Some(serde_json::json!({
+                "success": true,
+                "data": result.data,
+                "execution_time_ms": result.execution_time_ms
+            }))
+        } else {
+            let error_message = result
+                .error
+                .clone()
+                .unwrap_or_else(|| "Tool execution failed".to_string());
+
+            Some(serde_json::json!({
+                "success": false,
+                "error": error_message,
+                "data": result.data,
+                "execution_time_ms": result.execution_time_ms
+            }))
+        }
+    }
+
 
     /// 创建流式聊天完成请求 (暂时简化实现)
     pub async fn create_streaming_chat_completion(
@@ -410,7 +635,7 @@ impl AIChatService {
     ) -> Result<String, String> {
         // 对于流式响应，我们可以使用 async-openai 的流式功能
         // 但为了保持兼容性，暂时返回非流式结果的字符串格式
-        let response = Self::create_chat_completion(api_config, request).await?;
+        let response = Self::create_chat_completion(api_config, request, None).await?;
 
         // 转换为 SSE 格式
         let mut result = String::new();
@@ -462,3 +687,5 @@ impl AIChatService {
         }
     }
 }
+
+
