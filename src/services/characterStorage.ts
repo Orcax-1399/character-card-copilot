@@ -1,4 +1,5 @@
 import type { CharacterData, CharacterMeta, TavernCardV2 } from '@/types/character';
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * 角色卡存储服务
@@ -18,12 +19,15 @@ export function generateUUID(): string {
 
 /**
  * 获取所有角色卡列表
- * TODO: 需要实现Tauri后端命令来读取文件系统
  */
 export async function getAllCharacters(): Promise<CharacterData[]> {
-  // 暂时返回空数组，稍后实现Tauri命令
-  console.warn('getAllCharacters: 尚未实现Tauri后端命令');
-  return [];
+  try {
+    const characters = await invoke<CharacterData[]>('get_all_characters');
+    return characters;
+  } catch (error) {
+    console.error('获取角色卡列表失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -31,9 +35,13 @@ export async function getAllCharacters(): Promise<CharacterData[]> {
  * @param uuid 角色UUID
  */
 export async function getCharacterByUUID(uuid: string): Promise<CharacterData | null> {
-  // TODO: 实现Tauri后端命令
-  console.warn('getCharacterByUUID: 尚未实现Tauri后端命令', uuid);
-  return null;
+  try {
+    const character = await invoke<CharacterData | null>('get_character_by_uuid', { uuid });
+    return character;
+  } catch (error) {
+    console.error('获取角色卡失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -42,48 +50,13 @@ export async function getCharacterByUUID(uuid: string): Promise<CharacterData | 
  * @returns 新创建的角色数据
  */
 export async function createCharacter(name: string): Promise<CharacterData> {
-  const uuid = generateUUID();
-  const now = new Date().toISOString();
-
-  const meta: CharacterMeta = {
-    uuid,
-    version: '1.0',
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const card: TavernCardV2 = {
-    spec: 'chara_card_v2',
-    spec_version: '2.0',
-    data: {
-      name,
-      description: '',
-      personality: '',
-      scenario: '',
-      first_mes: '',
-      mes_example: '',
-      creator_notes: '',
-      system_prompt: '',
-      post_history_instructions: '',
-      alternate_greetings: [],
-      tags: [],
-      creator: '',
-      character_version: '1.0',
-      extensions: {},
-    },
-  };
-
-  const characterData: CharacterData = {
-    uuid,
-    meta,
-    card,
-    backgroundPath: '', // 暂时为空，待上传图片后填充
-  };
-
-  // TODO: 调用Tauri后端命令保存到文件系统
-  console.warn('createCharacter: 尚未实现Tauri后端命令', characterData);
-
-  return characterData;
+  try {
+    const character = await invoke<CharacterData>('create_character', { name });
+    return character;
+  } catch (error) {
+    console.error('创建角色卡失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -92,8 +65,12 @@ export async function createCharacter(name: string): Promise<CharacterData> {
  * @param card 更新后的角色卡数据
  */
 export async function updateCharacter(uuid: string, card: TavernCardV2): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('updateCharacter: 尚未实现Tauri后端命令', uuid, card);
+  try {
+    await invoke('update_character', { uuid, card });
+  } catch (error) {
+    console.error('更新角色卡失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -101,8 +78,12 @@ export async function updateCharacter(uuid: string, card: TavernCardV2): Promise
  * @param uuid 角色UUID
  */
 export async function deleteCharacter(uuid: string): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('deleteCharacter: 尚未实现Tauri后端命令', uuid);
+  try {
+    await invoke('delete_character', { uuid });
+  } catch (error) {
+    console.error('删除角色卡失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -111,7 +92,23 @@ export async function deleteCharacter(uuid: string): Promise<void> {
  * @param file 图片文件
  */
 export async function uploadBackgroundImage(uuid: string, file: File): Promise<string> {
-  // TODO: 实现Tauri后端命令
-  console.warn('uploadBackgroundImage: 尚未实现Tauri后端命令', uuid, file);
-  return '';
+  try {
+    // 将File转换为ArrayBuffer，然后转换为Uint8Array
+    const arrayBuffer = await file.arrayBuffer();
+    const imageBytes = new Uint8Array(arrayBuffer);
+
+    // 获取文件扩展名
+    const extension = file.name.split('.').pop() || 'png';
+
+    const backgroundPath = await invoke<string>('upload_background_image', {
+      uuid,
+      imageData: Array.from(imageBytes),
+      extension
+    });
+
+    return backgroundPath;
+  } catch (error) {
+    console.error('上传背景图片失败:', error);
+    throw new Error(error as string);
+  }
 }

@@ -33,6 +33,8 @@ export interface CreateApiRequest {
 export interface UpdateApiRequest extends Partial<ApiConfig> {
   /** 要更新的API配置名称 */
   profile: string;
+  /** 原始的API配置名称（用于查找要更新的配置） */
+  original_profile: string;
 }
 
 /**

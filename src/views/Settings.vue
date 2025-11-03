@@ -4,12 +4,67 @@ import { useAppStore } from "@/stores/app";
 import type { ApiConfig, ApiTestResult } from "@/types/api";
 import ApiList from "@/components/ApiList.vue";
 import ModelSelect from "@/components/ModelSelect.vue";
-import { copyApiConfig } from "@/services/apiConfig";
+import {
+    copyApiConfig,
+    updateApiConfig,
+    setDefaultApiConfig,
+    toggleApiConfig,
+    testApiConnection,
+    getAllApiConfigs,
+} from "@/services/apiConfig";
 
 const appStore = useAppStore();
 const selectedApi = ref<ApiConfig | null>(null);
 const editingApi = ref<ApiConfig | null>(null);
 const lastTestResult = ref<ApiTestResult | null>(null);
+
+// 用于强制刷新ApiList组件的key
+const apiListKey = ref(0);
+
+// 测试连接状态
+const testing = ref(false);
+
+// 存储原始的配置名称
+const originalProfile = ref<string>("");
+
+// 更新API列表
+async function updateApiList() {
+    try {
+        const configs = await getAllApiConfigs();
+        // 通过改变key强制刷新ApiList组件
+        apiListKey.value++;
+    } catch (error) {
+        console.error("更新API列表失败:", error);
+    }
+}
+
+// 自动保存函数
+async function autoSave() {
+    if (!editingApi.value || !selectedApi.value) return;
+
+    try {
+        await updateApiConfig({
+            profile: editingApi.value.profile,
+            original_profile: originalProfile.value,
+            endpoint: editingApi.value.endpoint,
+            key: editingApi.value.key,
+            model: editingApi.value.model,
+            default: editingApi.value.default,
+            enabled: editingApi.value.enabled,
+        });
+
+        // 更新selectedApi以反映最新保存的状态
+        selectedApi.value = { ...editingApi.value };
+
+        // 更新原始profile名称为当前名称
+        originalProfile.value = editingApi.value.profile;
+
+        // 触发左侧列表更新
+        await updateApiList();
+    } catch (error) {
+        console.error("自动保存失败:", error);
+    }
+}
 
 onMounted(() => {
     appStore.setPageTitle("设置", true);
@@ -18,60 +73,91 @@ onMounted(() => {
 function handleSelectApi(api: ApiConfig) {
     selectedApi.value = api;
     editingApi.value = { ...api }; // 创建副本用于编辑
+    originalProfile.value = api.profile; // 存储原始配置名称
     lastTestResult.value = null; // 重置测试结果
 }
 
 function updateApiModel(model: string) {
     if (editingApi.value) {
         editingApi.value.model = model;
+        autoSave();
     }
 }
 
-function saveApiChanges() {
-    if (editingApi.value && selectedApi.value) {
-        // TODO: 调用更新API配置的服务
-        console.log("保存API配置:", editingApi.value);
-        selectedApi.value = { ...editingApi.value };
-    }
-}
+async function handleToggleEnabled() {
+    if (!selectedApi.value || !editingApi.value) return;
 
-function handleTestConnection(result: ApiTestResult) {
-    lastTestResult.value = result;
-    if (selectedApi.value) {
-        selectedApi.value = { ...selectedApi.value };
-    }
-}
-
-function handleToggleEnabled() {
-    if (selectedApi.value && !selectedApi.value.enabled) {
+    if (!selectedApi.value.enabled) {
         // 如果要启用，检查是否有成功的测试结果
         if (lastTestResult.value?.success) {
-            selectedApi.value.enabled = true;
+            editingApi.value.enabled = true;
+            autoSave();
         } else {
             alert("请先测试连接成功后再启用此配置");
         }
-    } else if (selectedApi.value) {
-        selectedApi.value.enabled = false;
+    } else {
+        editingApi.value.enabled = false;
+        autoSave();
     }
 }
 
-function handleSetDefault() {
-    if (selectedApi.value && !selectedApi.value.default) {
-        // TODO: 调用设为默认的服务
-        console.log("设为默认:", selectedApi.value.profile);
-        selectedApi.value.default = true;
+async function handleSetDefault() {
+    if (selectedApi.value && !selectedApi.value.default && editingApi.value) {
+        try {
+            await setDefaultApiConfig(selectedApi.value.profile);
+            selectedApi.value.default = true;
+            editingApi.value.default = true;
+            // 更新左侧列表显示
+            await updateApiList();
+            alert("设为默认成功！");
+        } catch (error) {
+            console.error("设为默认失败:", error);
+            alert("设为默认失败，请重试");
+        }
     }
 }
 
 async function handleCopyConfig(api: ApiConfig) {
     try {
         const newApi = await copyApiConfig(api);
-        // 重新加载API列表
+        // 重新加载API列表 - 通过改变key强制刷新ApiList组件
+        apiListKey.value++;
         console.log("复制配置成功:", newApi);
-        // TODO: 这里应该触发重新加载API列表
+        alert("复制配置成功！");
     } catch (error) {
         console.error("复制配置失败:", error);
         alert("复制配置失败，请重试");
+    }
+}
+
+async function handleTestConnection() {
+    if (!editingApi.value) return;
+
+    testing.value = true;
+    lastTestResult.value = null;
+
+    try {
+        const result = await testApiConnection(editingApi.value);
+        lastTestResult.value = result;
+
+        // 更新selectedApi的测试结果
+        if (selectedApi.value) {
+            selectedApi.value = { ...selectedApi.value };
+        }
+
+        // 如果测试成功，更新editingApi
+        if (result.success && editingApi.value) {
+            editingApi.value = { ...editingApi.value };
+        }
+    } catch (error) {
+        console.error("测试连接失败:", error);
+        lastTestResult.value = {
+            success: false,
+            message: "测试连接失败",
+            error: error as string,
+        };
+    } finally {
+        testing.value = false;
     }
 }
 </script>
@@ -93,6 +179,7 @@ async function handleCopyConfig(api: ApiConfig) {
                         </div>
 
                         <ApiList
+                            :key="apiListKey"
                             @select="handleSelectApi"
                             @testConnection="handleTestConnection"
                             @copy="handleCopyConfig"
@@ -119,11 +206,13 @@ async function handleCopyConfig(api: ApiConfig) {
                                     class="block text-sm font-semibold text-gray-700 mb-1"
                                     >配置名称</label
                                 >
-                                <div
-                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                                >
-                                    {{ selectedApi.profile }}
-                                </div>
+                                <input
+                                    v-model="editingApi.profile"
+                                    @blur="autoSave"
+                                    type="text"
+                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                                    placeholder="请输入配置名称"
+                                />
                             </div>
 
                             <div class="bg-gray-50 rounded-lg p-3">
@@ -131,11 +220,13 @@ async function handleCopyConfig(api: ApiConfig) {
                                     class="block text-sm font-semibold text-gray-700 mb-1"
                                     >链接端点</label
                                 >
-                                <div
-                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                                >
-                                    {{ selectedApi.endpoint || "未设置" }}
-                                </div>
+                                <input
+                                    v-model="editingApi.endpoint"
+                                    @blur="autoSave"
+                                    type="text"
+                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                                    placeholder="请输入API端点URL"
+                                />
                             </div>
 
                             <div class="bg-gray-50 rounded-lg p-3">
@@ -143,13 +234,13 @@ async function handleCopyConfig(api: ApiConfig) {
                                     class="block text-sm font-semibold text-gray-700 mb-1"
                                     >API密钥</label
                                 >
-                                <div
-                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                                >
-                                    {{
-                                        selectedApi.key ? "••••••••" : "未设置"
-                                    }}
-                                </div>
+                                <input
+                                    v-model="editingApi.key"
+                                    @blur="autoSave"
+                                    type="password"
+                                    class="bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm w-full"
+                                    placeholder="请输入API密钥"
+                                />
                             </div>
 
                             <div class="bg-gray-50 rounded-lg p-3">
@@ -236,14 +327,10 @@ async function handleCopyConfig(api: ApiConfig) {
                             <div class="flex justify-end gap-3">
                                 <button
                                     class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-full text-sm transition-colors"
-                                    @click="saveApiChanges"
+                                    :disabled="testing"
+                                    @click="handleTestConnection"
                                 >
-                                    保存更改
-                                </button>
-                                <button
-                                    class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-full text-sm transition-colors"
-                                >
-                                    测试连接
+                                    {{ testing ? "测试中..." : "测试连接" }}
                                 </button>
                             </div>
                         </div>

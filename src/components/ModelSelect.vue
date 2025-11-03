@@ -66,11 +66,11 @@ function handleRefreshModels() {
   loadModels();
 }
 
-// 监听API配置变化，清空模型列表
+// 监听API配置变化，清空模型列表（但不清空已选中的模型）
 watch(() => [props.apiConfig.endpoint, props.apiConfig.key], () => {
   models.value = [];
   error.value = '';
-  selectedModel.value = '';
+  // 不清空 selectedModel.value，保持用户已选择的模型
 }, { deep: true });
 
 // 点击外部关闭下拉框

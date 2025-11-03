@@ -1,4 +1,5 @@
 import type { ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, ModelInfo, ModelsResponse } from '@/types/api';
+import { invoke } from '@tauri-apps/api/core';
 
 /**
  * API配置存储服务
@@ -7,12 +8,15 @@ import type { ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, Mode
 
 /**
  * 获取所有API配置
- * TODO: 需要实现Tauri后端命令来读取 api/apis.json 文件
  */
 export async function getAllApiConfigs(): Promise<ApiConfig[]> {
-  // TODO: 实现Tauri后端命令
-  console.warn('getAllApiConfigs: 尚未实现Tauri后端命令');
-  return [];
+  try {
+    const configs = await invoke<ApiConfig[]>('get_all_api_configs');
+    return configs;
+  } catch (error) {
+    console.error('获取API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -20,18 +24,26 @@ export async function getAllApiConfigs(): Promise<ApiConfig[]> {
  * @param profile 配置名称
  */
 export async function getApiConfigByProfile(profile: string): Promise<ApiConfig | null> {
-  // TODO: 实现Tauri后端命令
-  console.warn('getApiConfigByProfile: 尚未实现Tauri后端命令', profile);
-  return null;
+  try {
+    const config = await invoke<ApiConfig | null>('get_api_config_by_profile', { profile });
+    return config;
+  } catch (error) {
+    console.error('获取API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
  * 获取默认API配置
  */
 export async function getDefaultApiConfig(): Promise<ApiConfig | null> {
-  // TODO: 实现Tauri后端命令
-  console.warn('getDefaultApiConfig: 尚未实现Tauri后端命令');
-  return null;
+  try {
+    const config = await invoke<ApiConfig | null>('get_default_api_config');
+    return config;
+  } catch (error) {
+    console.error('获取默认API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -39,19 +51,13 @@ export async function getDefaultApiConfig(): Promise<ApiConfig | null> {
  * @param config API配置数据
  */
 export async function createApiConfig(config: CreateApiRequest): Promise<ApiConfig> {
-  const newConfig: ApiConfig = {
-    profile: config.profile,
-    endpoint: config.endpoint || '',
-    key: config.key || '',
-    model: config.model || '',
-    default: config.default || false,
-    enabled: config.enabled || false, // 默认为false，需要通过测试才能启用
-  };
-
-  // TODO: 调用Tauri后端命令保存到 api/apis.json
-  console.warn('createApiConfig: 尚未实现Tauri后端命令', newConfig);
-
-  return newConfig;
+  try {
+    const newConfig = await invoke<ApiConfig>('create_api_config', { request: config });
+    return newConfig;
+  } catch (error) {
+    console.error('创建API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -59,8 +65,12 @@ export async function createApiConfig(config: CreateApiRequest): Promise<ApiConf
  * @param config 更新后的API配置数据
  */
 export async function updateApiConfig(config: UpdateApiRequest): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('updateApiConfig: 尚未实现Tauri后端命令', config);
+  try {
+    await invoke('update_api_config', { request: config });
+  } catch (error) {
+    console.error('更新API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -68,8 +78,12 @@ export async function updateApiConfig(config: UpdateApiRequest): Promise<void> {
  * @param profile 配置名称
  */
 export async function deleteApiConfig(profile: string): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('deleteApiConfig: 尚未实现Tauri后端命令', profile);
+  try {
+    await invoke('delete_api_config', { profile });
+  } catch (error) {
+    console.error('删除API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -77,8 +91,12 @@ export async function deleteApiConfig(profile: string): Promise<void> {
  * @param profile 配置名称
  */
 export async function setDefaultApiConfig(profile: string): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('setDefaultApiConfig: 尚未实现Tauri后端命令', profile);
+  try {
+    await invoke('set_default_api_config', { profile });
+  } catch (error) {
+    console.error('设置默认API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -87,8 +105,12 @@ export async function setDefaultApiConfig(profile: string): Promise<void> {
  * @param enabled 是否启用
  */
 export async function toggleApiConfig(profile: string, enabled: boolean): Promise<void> {
-  // TODO: 实现Tauri后端命令
-  console.warn('toggleApiConfig: 尚未实现Tauri后端命令', profile, enabled);
+  try {
+    await invoke('toggle_api_config', { profile, enabled });
+  } catch (error) {
+    console.error('启用/禁用API配置失败:', error);
+    throw new Error(error as string);
+  }
 }
 
 /**
@@ -105,20 +127,14 @@ export async function testApiConnection(config: ApiConfig): Promise<ApiTestResul
   }
 
   try {
-    // TODO: 实现Tauri后端命令来测试API连接
-    // 这里会调用 /models 端点来测试连接
-    console.warn('testApiConnection: 尚未实现Tauri后端命令', config);
-
-    // 暂时返回成功，待实现后端命令
-    return {
-      success: true,
-      message: '连接测试成功'
-    };
+    const result = await invoke<ApiTestResult>('test_api_connection', { config });
+    return result;
   } catch (error) {
+    console.error('测试API连接失败:', error);
     return {
       success: false,
       message: '连接测试失败',
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: error as string
     };
   }
 }
@@ -133,21 +149,11 @@ export async function fetchModels(config: ApiConfig): Promise<ModelInfo[]> {
   }
 
   try {
-    // TODO: 实现Tauri后端命令来获取模型列表
-    // 这里会调用 config.endpoint + "/models"
-    console.warn('fetchModels: 尚未实现Tauri后端命令', config);
-
-    // 暂时返回一些常见模型，待实现后端命令
-    return [
-      { id: 'gpt-3.5-turbo', object: 'model' },
-      { id: 'gpt-4', object: 'model' },
-      { id: 'gpt-4-turbo-preview', object: 'model' },
-      { id: 'gpt-4o', object: 'model' },
-      { id: 'gpt-4o-mini', object: 'model' }
-    ];
+    const models = await invoke<ModelInfo[]>('fetch_models', { config });
+    return models;
   } catch (error) {
     console.error('获取模型列表失败:', error);
-    throw new Error(error instanceof Error ? error.message : 'Failed to fetch models');
+    throw new Error(error as string);
   }
 }
 
