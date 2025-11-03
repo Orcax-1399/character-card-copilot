@@ -4,12 +4,14 @@ mod api_config;
 mod ai_config;
 mod ai_tools;
 mod ai_chat;
+mod chat_history;
 
 use character_storage::{CharacterStorage, CharacterData, TavernCardV2};
 use api_config::{ApiConfigService, ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, ModelInfo};
 use ai_config::{AIConfigService, AIRole};
 use ai_tools::{AIToolService, ToolCallRequest, ToolResult, AITool};
 use ai_chat::{AIChatService, ChatCompletionRequest, ChatCompletionResponse};
+use chat_history::{ChatHistoryManager, ChatMessage};
 
 // ====================== 角色卡相关命令 ======================
 
@@ -177,6 +179,76 @@ async fn create_streaming_chat_completion(
     AIChatService::create_streaming_chat_completion(&api_config, &request).await
 }
 
+// ====================== 聊天历史相关命令 ======================
+
+#[tauri::command]
+async fn save_chat_message(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+    message: ChatMessage,
+) -> Result<(), String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.save_message(&message)
+}
+
+#[tauri::command]
+async fn load_chat_history(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+) -> Result<Vec<ChatMessage>, String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.load_history()
+}
+
+#[tauri::command]
+async fn clear_chat_history(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+) -> Result<(), String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.clear_history()
+}
+
+#[tauri::command]
+async fn delete_chat_message(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+    index: usize,
+) -> Result<(), String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.delete_message(index)
+}
+
+#[tauri::command]
+async fn update_chat_message(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+    index: usize,
+    message: ChatMessage,
+) -> Result<(), String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.update_message(index, &message)
+}
+
+#[tauri::command]
+async fn get_last_chat_message(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+) -> Result<Option<ChatMessage>, String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.get_last_message()
+}
+
+#[tauri::command]
+async fn get_recent_chat_messages(
+    app_handle: tauri::AppHandle,
+    character_id: String,
+    count: usize,
+) -> Result<Vec<ChatMessage>, String> {
+    let manager = ChatHistoryManager::new(&app_handle, &character_id);
+    manager.get_recent_messages(count)
+}
+
 // ====================== 通用命令 ======================
 
 #[tauri::command]
@@ -188,6 +260,7 @@ fn generate_uuid() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             // 角色卡命令
             get_all_characters,
@@ -224,6 +297,14 @@ pub fn run() {
             // AI聊天命令
             create_chat_completion,
             create_streaming_chat_completion,
+            // 聊天历史命令
+            save_chat_message,
+            load_chat_history,
+            clear_chat_history,
+            delete_chat_message,
+            update_chat_message,
+            get_last_chat_message,
+            get_recent_chat_messages,
             // 通用命令
             generate_uuid
         ])
