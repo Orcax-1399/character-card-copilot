@@ -6,6 +6,7 @@ mod ai_tools;
 mod ai_chat;
 mod chat_history;
 mod character_state;
+mod png_utils;
 
 use character_storage::{CharacterStorage, CharacterData, TavernCardV2};
 use api_config::{ApiConfigService, ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, ModelInfo};
@@ -50,6 +51,21 @@ async fn upload_background_image(app_handle: tauri::AppHandle, uuid: String, ima
 #[tauri::command]
 async fn update_character_background_path(app_handle: tauri::AppHandle, uuid: String, background_path: String) -> Result<(), String> {
     CharacterStorage::update_character_background_path(&app_handle, &uuid, &background_path)
+}
+
+#[tauri::command]
+async fn export_character_card(app_handle: tauri::AppHandle, uuid: String, output_path: String) -> Result<String, String> {
+    CharacterStorage::export_character_card(&app_handle, &uuid, &output_path)
+}
+
+#[tauri::command]
+async fn import_character_card(app_handle: tauri::AppHandle, file_path: String) -> Result<CharacterData, String> {
+    CharacterStorage::import_character_card(&app_handle, &file_path)
+}
+
+#[tauri::command]
+async fn import_character_card_from_bytes(app_handle: tauri::AppHandle, file_data: Vec<u8>, file_name: String) -> Result<CharacterData, String> {
+    CharacterStorage::import_character_card_from_bytes(&app_handle, &file_data, &file_name)
 }
 
 // ====================== API配置相关命令 ======================
@@ -264,6 +280,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             // 角色卡命令
             get_all_characters,
@@ -273,6 +290,9 @@ pub fn run() {
             delete_character,
             upload_background_image,
             update_character_background_path,
+            export_character_card,
+            import_character_card,
+            import_character_card_from_bytes,
             // API配置命令
             get_all_api_configs,
             get_api_config_by_profile,

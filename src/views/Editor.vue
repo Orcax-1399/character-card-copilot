@@ -6,6 +6,8 @@ import {
     getCharacterByUUID,
     updateCharacter,
     deleteCharacter as deleteCharacterByUUID,
+    exportCharacterCard,
+    importCharacterCardFromBytes,
 } from "@/services/characterStorage";
 import type { TavernCardV2 } from "@/types/character";
 import AIPanel from "@/components/AIPanel.vue";
@@ -13,6 +15,8 @@ import {
     uploadBackgroundImage,
     updateCharacterBackgroundPath,
 } from "@/services/characterStorage";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { CharacterStateService } from "@/services/characterState";
 import { listen } from "@tauri-apps/api/event";
 import { tokenCounter } from "@/utils/tokenCounter";
@@ -291,28 +295,79 @@ async function deleteCharacter() {
     }
 }
 
+// 导出角色功能
+async function exportCharacter() {
+    if (!characterUUID.value) return
+
+    try {
+        isLoading.value = true
+
+        // 使用角色名称作为文件名，如果没有图片导出 JSON，有图片导出 PNG
+        const hasImage = !!backgroundPath.value
+        const fileName = characterData.value.name || '未命名角色'
+        const extension = hasImage ? 'png' : 'json'
+
+        // 打开保存对话框
+        const filePath = await save({
+            defaultPath: `${fileName}.${extension}`,
+            filters: [{
+                name: hasImage ? 'PNG 图片' : 'JSON 文件',
+                extensions: [extension]
+            }]
+        })
+
+        if (!filePath) {
+            // 用户取消了保存
+            return
+        }
+
+        // 调用导出API
+        const fileType = await exportCharacterCard(characterUUID.value, filePath)
+        showSuccessToast(`角色已导出为 ${fileType.toUpperCase()} 格式`, '导出成功')
+    } catch (error) {
+        console.error('导出角色失败:', error)
+        showErrorToast('导出角色失败，请重试', '导出失败')
+    } finally {
+        isLoading.value = false
+    }
+}
+
 // 导入角色功能
 async function importCharacter() {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = '.json,.png,.card'
+    try {
+        // 打开文件选择对话框
+        const selected = await open({
+            multiple: false,
+            filters: [{
+                name: '角色卡文件',
+                extensions: ['png', 'json', 'card']
+            }]
+        })
 
-    input.onchange = async (event) => {
-        const file = (event.target as HTMLInputElement).files?.[0]
-        if (!file) return
-
-        try {
-            // 这里需要实现角色导入逻辑
-            // const importedData = await parseCharacterFile(file)
-            // await saveImportedCharacter(importedData)
-            showSuccessToast('角色导入成功', '导入完成')
-        } catch (error) {
-            console.error('导入角色失败:', error)
-            showErrorToast('导入角色失败，请检查文件格式', '导入失败')
+        if (!selected || typeof selected !== 'string') {
+            // 用户取消了选择
+            return
         }
-    }
 
-    input.click()
+        isLoading.value = true
+
+        // 使用 Tauri fs 插件读取文件内容
+        const fileData = await readFile(selected)
+        const fileName = selected.split(/[\\/]/).pop() || 'character.png'
+
+        // 调用导入API
+        const importedCharacter = await importCharacterCardFromBytes(fileData, fileName)
+
+        showSuccessToast('角色导入成功', '导入完成')
+
+        // 跳转到导入的角色编辑页面
+        router.push(`/editor/${importedCharacter.uuid}`)
+    } catch (error) {
+        console.error('导入角色失败:', error)
+        showErrorToast('导入角色失败，请检查文件格式', '导入失败')
+    } finally {
+        isLoading.value = false
+    }
 }
 
 // 组件卸载时清除活跃角色状态
@@ -413,6 +468,15 @@ onUnmounted(async () => {
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
                             </svg>
                             删除角色
+                        </button>
+                        <button
+                            @click="exportCharacter"
+                            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2"
+                        >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V8"/>
+                            </svg>
+                            导出角色
                         </button>
                         <button
                             @click="importCharacter"

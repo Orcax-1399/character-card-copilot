@@ -126,3 +126,53 @@ export async function updateCharacterBackgroundPath(uuid: string, backgroundPath
     throw new Error(error as string);
   }
 }
+
+/**
+ * 导出角色卡
+ * @param uuid 角色UUID
+ * @param outputPath 输出文件路径
+ * @returns 导出的文件类型（"json" 或 "png"）
+ */
+export async function exportCharacterCard(uuid: string, outputPath: string): Promise<string> {
+  try {
+    const fileType = await invoke<string>('export_character_card', { uuid, outputPath });
+    return fileType;
+  } catch (error) {
+    console.error('导出角色卡失败:', error);
+    throw new Error(error as string);
+  }
+}
+
+/**
+ * 从文件导入角色卡
+ * @param filePath 文件路径
+ * @returns 导入的角色数据
+ */
+export async function importCharacterCard(filePath: string): Promise<CharacterData> {
+  try {
+    const character = await invoke<CharacterData>('import_character_card', { filePath });
+    return character;
+  } catch (error) {
+    console.error('导入角色卡失败:', error);
+    throw new Error(error as string);
+  }
+}
+
+/**
+ * 从字节数据导入角色卡
+ * @param fileData 文件字节数据
+ * @param fileName 文件名
+ * @returns 导入的角色数据
+ */
+export async function importCharacterCardFromBytes(fileData: Uint8Array, fileName: string): Promise<CharacterData> {
+  try {
+    const character = await invoke<CharacterData>('import_character_card_from_bytes', {
+      fileData: Array.from(fileData),
+      fileName
+    });
+    return character;
+  } catch (error) {
+    console.error('导入角色卡失败:', error);
+    throw new Error(error as string);
+  }
+}

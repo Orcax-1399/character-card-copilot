@@ -1,4 +1,5 @@
 use super::file_utils::FileUtils;
+use super::png_utils::PngMetadataUtils;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -323,5 +324,197 @@ impl CharacterStorage {
 
         FileUtils::write_json_file(&card_file, &character_data)?;
         Ok(())
+    }
+
+    /// 导出角色卡
+    ///
+    /// # 参数
+    /// * `app_handle` - Tauri 应用句柄
+    /// * `uuid` - 角色 UUID
+    /// * `output_path` - 输出文件路径
+    ///
+    /// # 返回
+    /// * `Ok(String)` - 导出的文件类型（"json" 或 "png"）
+    pub fn export_character_card(
+        app_handle: &tauri::AppHandle,
+        uuid: &str,
+        output_path: &str,
+    ) -> Result<String, String> {
+        // 读取角色数据
+        let character = Self::get_character_by_uuid(app_handle, uuid)?
+            .ok_or_else(|| format!("角色 {} 不存在", uuid))?;
+
+        // 序列化 TavernCardV2 为 JSON
+        let card_json = serde_json::to_string_pretty(&character.card)
+            .map_err(|e| format!("序列化角色卡失败: {}", e))?;
+
+        // 检查是否有背景图片
+        let has_image = !character.backgroundPath.is_empty();
+
+        if has_image {
+            // 从 base64 解码图片数据
+            let image_data = if character.backgroundPath.starts_with("data:") {
+                // 提取 base64 部分
+                let parts: Vec<&str> = character.backgroundPath.split(',').collect();
+                if parts.len() != 2 {
+                    return Err("无效的图片数据格式".to_string());
+                }
+                STANDARD.decode(parts[1])
+                    .map_err(|e| format!("解码图片数据失败: {}", e))?
+            } else {
+                // 如果是文件路径，读取文件
+                fs::read(&character.backgroundPath)
+                    .map_err(|e| format!("读取背景图片失败: {}", e))?
+            };
+
+            // 将角色卡数据写入 PNG
+            let output_bytes = PngMetadataUtils::write_character_data_to_bytes(
+                &image_data,
+                &card_json,
+            ).map_err(|e| format!("写入 PNG 元数据失败: {}", e))?;
+
+            // 保存到文件
+            fs::write(output_path, output_bytes)
+                .map_err(|e| format!("保存 PNG 文件失败: {}", e))?;
+
+            Ok("png".to_string())
+        } else {
+            // 没有图片，直接导出 JSON
+            fs::write(output_path, card_json)
+                .map_err(|e| format!("保存 JSON 文件失败: {}", e))?;
+
+            Ok("json".to_string())
+        }
+    }
+
+    /// 从 PNG 或 JSON 导入角色卡
+    ///
+    /// # 参数
+    /// * `app_handle` - Tauri 应用句柄
+    /// * `file_path` - 导入文件路径
+    ///
+    /// # 返回
+    /// * `Ok(CharacterData)` - 导入的角色数据
+    pub fn import_character_card(
+        app_handle: &tauri::AppHandle,
+        file_path: &str,
+    ) -> Result<CharacterData, String> {
+        // 读取文件
+        let file_data = fs::read(file_path)
+            .map_err(|e| format!("读取文件失败: {}", e))?;
+
+        // 判断文件类型
+        let is_png = file_path.ends_with(".png");
+
+        // 尝试解析为 PNG
+        let card_json = if is_png {
+            // 从 PNG 中提取角色卡数据
+            PngMetadataUtils::read_character_data_from_bytes(&file_data)
+                .map_err(|e| format!("从 PNG 读取角色卡数据失败: {}", e))?
+        } else {
+            // 作为 JSON 解析
+            String::from_utf8(file_data.clone())
+                .map_err(|e| format!("读取 JSON 文件失败: {}", e))?
+        };
+
+        // 解析 TavernCardV2
+        let card: TavernCardV2 = serde_json::from_str(&card_json)
+            .map_err(|e| format!("解析角色卡数据失败: {}", e))?;
+
+        // 生成新的 UUID 和元数据
+        let uuid = FileUtils::generate_uuid();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let meta = CharacterMeta {
+            uuid: uuid.clone(),
+            version: "1.0".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        // 处理背景图片
+        let background_path = if is_png {
+            // 从 PNG 文件中提取背景图片
+            let base64_data = STANDARD.encode(&file_data);
+            format!("data:image/png;base64,{}", base64_data)
+        } else {
+            String::new()
+        };
+
+        let character_data = CharacterData {
+            uuid: uuid.clone(),
+            meta,
+            card,
+            backgroundPath: background_path,
+        };
+
+        // 保存角色卡
+        let card_file = Self::get_character_file_path(app_handle, &uuid)?;
+        FileUtils::write_json_file(&card_file, &character_data)?;
+
+        Ok(character_data)
+    }
+
+    /// 从字节数据导入角色卡
+    ///
+    /// # 参数
+    /// * `app_handle` - Tauri 应用句柄
+    /// * `file_data` - 文件字节数据
+    /// * `file_name` - 文件名（用于判断类型）
+    ///
+    /// # 返回
+    /// * `Ok(CharacterData)` - 导入的角色数据
+    pub fn import_character_card_from_bytes(
+        app_handle: &tauri::AppHandle,
+        file_data: &[u8],
+        file_name: &str,
+    ) -> Result<CharacterData, String> {
+        // 尝试解析为 PNG
+        let card_json = if file_name.ends_with(".png") {
+            // 从 PNG 中提取角色卡数据
+            PngMetadataUtils::read_character_data_from_bytes(file_data)
+                .map_err(|e| format!("从 PNG 读取角色卡数据失败: {}", e))?
+        } else {
+            // 作为 JSON 解析
+            String::from_utf8(file_data.to_vec())
+                .map_err(|e| format!("读取 JSON 文件失败: {}", e))?
+        };
+
+        // 解析 TavernCardV2
+        let card: TavernCardV2 = serde_json::from_str(&card_json)
+            .map_err(|e| format!("解析角色卡数据失败: {}", e))?;
+
+        // 生成新的 UUID 和元数据
+        let uuid = FileUtils::generate_uuid();
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let meta = CharacterMeta {
+            uuid: uuid.clone(),
+            version: "1.0".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        // 处理背景图片
+        let background_path = if file_name.ends_with(".png") {
+            // 从 PNG 文件中提取背景图片
+            let base64_data = STANDARD.encode(file_data);
+            format!("data:image/png;base64,{}", base64_data)
+        } else {
+            String::new()
+        };
+
+        let character_data = CharacterData {
+            uuid: uuid.clone(),
+            meta,
+            card,
+            backgroundPath: background_path,
+        };
+
+        // 保存角色卡
+        let card_file = Self::get_character_file_path(app_handle, &uuid)?;
+        FileUtils::write_json_file(&card_file, &character_data)?;
+
+        Ok(character_data)
     }
 }
