@@ -17,99 +17,99 @@ const modalOptions = ref<ModalOptions | null>(null);
 
 // Toast方法
 function showToast(
-  type: Toast["type"],
-  message: string,
-  title?: string,
-  duration?: number
+    type: Toast["type"],
+    message: string,
+    title?: string,
+    duration?: number,
 ) {
-  const toast: Toast = {
-    id: generateId(),
-    type,
-    title,
-    message,
-    duration,
-    timestamp: Date.now()
-  };
+    const toast: Toast = {
+        id: generateId(),
+        type,
+        title,
+        message,
+        duration,
+        timestamp: Date.now(),
+    };
 
-  toasts.value.push(toast);
+    toasts.value.push(toast);
 }
 
 function showSuccessToast(message: string, title?: string) {
-  showToast("success", message, title || "操作成功");
+    showToast("success", message, title || "操作成功");
 }
 
 function showWarningToast(message: string, title?: string) {
-  showToast("warning", message, title || "警告");
+    showToast("warning", message, title || "警告");
 }
 
 function showInfoToast(message: string, title?: string) {
-  showToast("info", message, title || "提示");
+    showToast("info", message, title || "提示");
 }
 
 function showErrorToast(message: string, title?: string) {
-  showToast("error", message, title || "错误");
+    showToast("error", message, title || "错误");
 }
 
 // Modal方法
 function showAlertModal(
-  message: string,
-  onConfirm?: () => void | Promise<void>,
-  options?: Partial<ModalOptions>
+    message: string,
+    onConfirm?: () => void | Promise<void>,
+    options?: Partial<ModalOptions>,
 ): Promise<boolean> {
-  return new Promise((resolve) => {
-    modalOptions.value = {
-      title: options?.title || "确认操作",
-      message,
-      type: options?.type || "warning",
-      confirmText: options?.confirmText || "确认",
-      cancelText: options?.cancelText || "取消",
-      onConfirm: async () => {
-        try {
-          await onConfirm?.();
-          resolve(true);
-        } catch (error) {
-          console.error("Modal confirm error:", error);
-          resolve(false);
-        }
-      },
-      onCancel: () => {
-        options?.onCancel?.();
-        resolve(false);
-      }
-    };
-  });
+    return new Promise((resolve) => {
+        modalOptions.value = {
+            title: options?.title || "确认操作",
+            message,
+            type: options?.type || "warning",
+            confirmText: options?.confirmText || "确认",
+            cancelText: options?.cancelText || "取消",
+            onConfirm: async () => {
+                try {
+                    await onConfirm?.();
+                    resolve(true);
+                } catch (error) {
+                    console.error("Modal confirm error:", error);
+                    resolve(false);
+                }
+            },
+            onCancel: () => {
+                options?.onCancel?.();
+                resolve(false);
+            },
+        };
+    });
 }
 
 // Modal事件处理
 function handleModalConfirm() {
-  modalOptions.value = null;
+    modalOptions.value = null;
 }
 
 function handleModalCancel() {
-  modalOptions.value = null;
+    modalOptions.value = null;
 }
 
 function handleModalClose() {
-  modalOptions.value = null;
+    modalOptions.value = null;
 }
 
 // 提供全局方法
 provide(NotificationSymbol, {
-  showSuccessToast,
-  showWarningToast,
-  showInfoToast,
-  showErrorToast
+    showSuccessToast,
+    showWarningToast,
+    showInfoToast,
+    showErrorToast,
 });
 
 provide(ModalSymbol, {
-  showAlertModal
+    showAlertModal,
 });
 </script>
 
 <template>
     <div id="app" class="min-h-screen bg-gray-50">
         <Navbar />
-        <main class="container mx-auto p-4">
+        <main class="flex w-full p-2">
             <RouterView />
         </main>
 

@@ -14,6 +14,58 @@ pub struct CharacterMeta {
     pub updated_at: String,
 }
 
+// 默认 extensions 值
+fn default_extensions() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+/// 世界书条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldBookEntry {
+    pub keys: Vec<String>,
+    pub content: String,
+    #[serde(default = "default_extensions")]
+    pub extensions: serde_json::Value,
+    pub enabled: bool,
+    pub insertion_order: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_sensitive: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub priority: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selective: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secondary_keys: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constant: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+}
+
+/// 世界书（Character Book）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterBook {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scan_depth: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_budget: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recursive_scanning: Option<bool>,
+    #[serde(default = "default_extensions")]
+    pub extensions: serde_json::Value,
+    pub entries: Vec<WorldBookEntry>,
+}
+
 /// Tavern Card V2 数据结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TavernCardV2Data {
@@ -30,7 +82,10 @@ pub struct TavernCardV2Data {
     pub tags: Vec<String>,
     pub creator: String,
     pub character_version: String,
+    #[serde(default = "default_extensions")]
     pub extensions: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character_book: Option<CharacterBook>,
 }
 
 /// Tavern Card V2 结构
@@ -201,6 +256,7 @@ impl CharacterStorage {
                 creator: String::new(),
                 character_version: "1.0".to_string(),
                 extensions: serde_json::json!({}),
+                character_book: None,
             },
         };
 

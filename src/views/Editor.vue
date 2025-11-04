@@ -11,6 +11,7 @@ import {
 } from "@/services/characterStorage";
 import type { TavernCardV2 } from "@/types/character";
 import AIPanel from "@/components/AIPanel.vue";
+import WorldBookEditor from "@/components/WorldBookEditor.vue";
 import {
     uploadBackgroundImage,
     updateCharacterBackgroundPath,
@@ -26,13 +27,17 @@ import { useModal } from "@/composables/useModal";
 const appStore = useAppStore();
 const route = useRoute();
 const router = useRouter();
-const { showSuccessToast, showErrorToast, showWarningToast } = useNotification();
+const { showSuccessToast, showErrorToast, showWarningToast } =
+    useNotification();
 const { showAlertModal } = useModal();
 const isLoading = ref(false);
 const characterUUID = ref<string>("");
 const aiPanelVisible = ref(true);
 const backgroundPath = ref<string>("");
 const isUploading = ref(false);
+
+// 编辑器模式：'character' 或 'worldBook'
+const editorMode = ref<"character" | "worldBook">("character");
 
 // 编辑器容器引用
 const editorContainerRef = ref<HTMLElement>();
@@ -43,6 +48,18 @@ const tokenCounts = ref<Record<string, number>>({});
 // 切换AI面板显示状态
 function toggleAIPanel() {
     aiPanelVisible.value = !aiPanelVisible.value;
+}
+
+// 切换编辑器模式
+function toggleEditorMode() {
+    const newMode =
+        editorMode.value === "character" ? "worldBook" : "character";
+    editorMode.value = newMode;
+
+    // 世界书模式下自动隐藏AI面板，获得更多空间
+    if (newMode === "worldBook") {
+        aiPanelVisible.value = false;
+    }
 }
 
 // 头像上传功能
@@ -233,102 +250,120 @@ onMounted(async () => {
 
 // 计算tokens的函数
 function updateTokenCount(fieldName: string, text: string) {
-    const count = tokenCounter.countTokens(text)
-    tokenCounts.value[fieldName] = count
+    const count = tokenCounter.countTokens(text);
+    tokenCounts.value[fieldName] = count;
 }
 
 // 监听字段变化更新token计数
-watch([
-    () => characterData.value.description,
-    () => characterData.value.personality,
-    () => characterData.value.scenario,
-    () => characterData.value.first_mes,
-    () => characterData.value.mes_example,
-    () => characterData.value.creator_notes,
-    () => characterData.value.system_prompt,
-    () => characterData.value.post_history_instructions,
-    () => characterData.value.alternate_greetings,
-    () => characterData.value.tags
-], () => {
-    updateTokenCount('description', characterData.value.description)
-    updateTokenCount('personality', characterData.value.personality)
-    updateTokenCount('scenario', characterData.value.scenario)
-    updateTokenCount('first_mes', characterData.value.first_mes)
-    updateTokenCount('mes_example', characterData.value.mes_example)
-    updateTokenCount('creator_notes', characterData.value.creator_notes)
-    updateTokenCount('system_prompt', characterData.value.system_prompt)
-    updateTokenCount('post_history_instructions', characterData.value.post_history_instructions)
-    updateTokenCount('alternate_greetings', characterData.value.alternate_greetings)
-    updateTokenCount('tags', characterData.value.tags)
-}, { immediate: true })
+watch(
+    [
+        () => characterData.value.description,
+        () => characterData.value.personality,
+        () => characterData.value.scenario,
+        () => characterData.value.first_mes,
+        () => characterData.value.mes_example,
+        () => characterData.value.creator_notes,
+        () => characterData.value.system_prompt,
+        () => characterData.value.post_history_instructions,
+        () => characterData.value.alternate_greetings,
+        () => characterData.value.tags,
+    ],
+    () => {
+        updateTokenCount("description", characterData.value.description);
+        updateTokenCount("personality", characterData.value.personality);
+        updateTokenCount("scenario", characterData.value.scenario);
+        updateTokenCount("first_mes", characterData.value.first_mes);
+        updateTokenCount("mes_example", characterData.value.mes_example);
+        updateTokenCount("creator_notes", characterData.value.creator_notes);
+        updateTokenCount("system_prompt", characterData.value.system_prompt);
+        updateTokenCount(
+            "post_history_instructions",
+            characterData.value.post_history_instructions,
+        );
+        updateTokenCount(
+            "alternate_greetings",
+            characterData.value.alternate_greetings,
+        );
+        updateTokenCount("tags", characterData.value.tags);
+    },
+    { immediate: true },
+);
 
 // 删除角色功能
 async function deleteCharacter() {
-    if (!characterUUID.value) return
+    if (!characterUUID.value) return;
 
     try {
         const confirmed = await showAlertModal(
-            `确定要删除"${characterData.value.name || '这个角色'}"吗？此操作不可撤销。`,
+            `确定要删除"${characterData.value.name || "这个角色"}"吗？此操作不可撤销。`,
             async () => {
                 // 调用删除角色的API
-                await deleteCharacterByUUID(characterUUID.value)
-                console.log('角色删除成功')
+                await deleteCharacterByUUID(characterUUID.value);
+                console.log("角色删除成功");
             },
             {
-                title: '删除确认',
-                type: 'danger',
-                confirmText: '确认删除',
-                cancelText: '取消'
-            }
-        )
+                title: "删除确认",
+                type: "danger",
+                confirmText: "确认删除",
+                cancelText: "取消",
+            },
+        );
 
         if (confirmed) {
-            showSuccessToast('角色删除成功', '操作完成')
+            showSuccessToast("角色删除成功", "操作完成");
             // 等待Toast显示一下再跳转
             setTimeout(() => {
-                router.push('/')
-            }, 500)
+                router.push("/");
+            }, 500);
         }
     } catch (error) {
-        console.error('删除角色失败:', error)
-        showErrorToast('删除角色失败，请重试', '删除失败')
+        console.error("删除角色失败:", error);
+        showErrorToast("删除角色失败，请重试", "删除失败");
     }
 }
 
 // 导出角色功能
 async function exportCharacter() {
-    if (!characterUUID.value) return
+    if (!characterUUID.value) return;
 
     try {
-        isLoading.value = true
+        isLoading.value = true;
 
         // 使用角色名称作为文件名，如果没有图片导出 JSON，有图片导出 PNG
-        const hasImage = !!backgroundPath.value
-        const fileName = characterData.value.name || '未命名角色'
-        const extension = hasImage ? 'png' : 'json'
+        const hasImage = !!backgroundPath.value;
+        const fileName = characterData.value.name || "未命名角色";
+        const extension = hasImage ? "png" : "json";
 
         // 打开保存对话框
         const filePath = await save({
             defaultPath: `${fileName}.${extension}`,
-            filters: [{
-                name: hasImage ? 'PNG 图片' : 'JSON 文件',
-                extensions: [extension]
-            }]
-        })
+            filters: [
+                {
+                    name: hasImage ? "PNG 图片" : "JSON 文件",
+                    extensions: [extension],
+                },
+            ],
+        });
 
         if (!filePath) {
             // 用户取消了保存
-            return
+            return;
         }
 
         // 调用导出API
-        const fileType = await exportCharacterCard(characterUUID.value, filePath)
-        showSuccessToast(`角色已导出为 ${fileType.toUpperCase()} 格式`, '导出成功')
+        const fileType = await exportCharacterCard(
+            characterUUID.value,
+            filePath,
+        );
+        showSuccessToast(
+            `角色已导出为 ${fileType.toUpperCase()} 格式`,
+            "导出成功",
+        );
     } catch (error) {
-        console.error('导出角色失败:', error)
-        showErrorToast('导出角色失败，请重试', '导出失败')
+        console.error("导出角色失败:", error);
+        showErrorToast("导出角色失败，请重试", "导出失败");
     } finally {
-        isLoading.value = false
+        isLoading.value = false;
     }
 }
 
@@ -338,35 +373,40 @@ async function importCharacter() {
         // 打开文件选择对话框
         const selected = await open({
             multiple: false,
-            filters: [{
-                name: '角色卡文件',
-                extensions: ['png', 'json', 'card']
-            }]
-        })
+            filters: [
+                {
+                    name: "角色卡文件",
+                    extensions: ["png", "json", "card"],
+                },
+            ],
+        });
 
-        if (!selected || typeof selected !== 'string') {
+        if (!selected || typeof selected !== "string") {
             // 用户取消了选择
-            return
+            return;
         }
 
-        isLoading.value = true
+        isLoading.value = true;
 
         // 使用 Tauri fs 插件读取文件内容
-        const fileData = await readFile(selected)
-        const fileName = selected.split(/[\\/]/).pop() || 'character.png'
+        const fileData = await readFile(selected);
+        const fileName = selected.split(/[\\/]/).pop() || "character.png";
 
         // 调用导入API
-        const importedCharacter = await importCharacterCardFromBytes(fileData, fileName)
+        const importedCharacter = await importCharacterCardFromBytes(
+            fileData,
+            fileName,
+        );
 
-        showSuccessToast('角色导入成功', '导入完成')
+        showSuccessToast("角色导入成功", "导入完成");
 
         // 跳转到导入的角色编辑页面
-        router.push(`/editor/${importedCharacter.uuid}`)
+        router.push(`/editor/${importedCharacter.uuid}`);
     } catch (error) {
-        console.error('导入角色失败:', error)
-        showErrorToast('导入角色失败，请检查文件格式', '导入失败')
+        console.error("导入角色失败:", error);
+        showErrorToast("导入角色失败，请检查文件格式", "导入失败");
     } finally {
-        isLoading.value = false
+        isLoading.value = false;
     }
 }
 
@@ -377,13 +417,13 @@ onUnmounted(async () => {
 </script>
 
 <template>
-    <div class="h-[calc(100vh-6rem)] bg-gray-50 p-4">
-        <div class="flex h-full gap-4">
+    <div class="h-[calc(100vh-5rem)] bg-gray-50 w-full px-1 py-2">
+        <div class="flex h-full w-full gap-2">
             <!-- 左侧：角色信息显示 -->
             <div
                 ref="editorContainerRef"
-                class="card rounded-xl bg-white p-6 overflow-y-auto shadow-2xl"
-                :class="aiPanelVisible ? 'w-1/2' : 'w-full'"
+                class="card rounded-xl bg-white p-3 overflow-y-auto shadow-2xl"
+                :class="aiPanelVisible ? 'w-[70%]' : 'w-full'"
             >
                 <!-- 加载状态 -->
                 <div
@@ -462,38 +502,93 @@ onUnmounted(async () => {
                     <div class="flex gap-2 mb-6">
                         <button
                             @click="deleteCharacter"
-                            class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2"
+                            class="bg-red-500 hover:bg-red-700 text-white text-sm font-medium py-1.5 px-3 rounded-full flex items-center gap-1.5"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                            <svg
+                                class="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
                             </svg>
                             删除角色
                         </button>
                         <button
                             @click="exportCharacter"
-                            class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2"
+                            class="bg-blue-500 hover:bg-blue-700 text-white text-sm font-medium py-1.5 px-3 rounded-full flex items-center gap-1.5"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V8"/>
+                            <svg
+                                class="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 11l3 3m0 0l3-3m-3 3V8"
+                                />
                             </svg>
                             导出角色
                         </button>
                         <button
                             @click="importCharacter"
-                            class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-full flex items-center gap-2"
+                            class="bg-green-500 hover:bg-green-700 text-white text-sm font-medium py-1.5 px-3 rounded-full flex items-center gap-1.5"
                         >
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                            <svg
+                                class="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                                />
                             </svg>
                             导入角色
                         </button>
+                        <button
+                            @click="toggleEditorMode"
+                            class="bg-purple-500 hover:bg-purple-700 text-white text-sm font-medium py-1.5 px-3 rounded-full flex items-center gap-1.5"
+                        >
+                            <svg
+                                class="w-3.5 h-3.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
+                                />
+                            </svg>
+                            {{
+                                editorMode === "character"
+                                    ? "世界书编辑"
+                                    : "角色编辑"
+                            }}
+                        </button>
                     </div>
 
-                    <!-- 其他角色信息表单 -->
-                    <div class="space-y-4">
+                    <!-- 角色编辑表单 -->
+                    <div v-if="editorMode === 'character'" class="space-y-4">
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     角色描述
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -511,7 +606,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     性格特点
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -529,7 +626,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     场景设定
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -547,7 +646,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     开场白
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -565,7 +666,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     对话示例
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -583,7 +686,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     创作者笔记
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -601,7 +706,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     系统提示词
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -619,11 +726,17 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     历史后指令
                                 </label>
                                 <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.post_history_instructions || 0 }} tokens
+                                    {{
+                                        tokenCounts.post_history_instructions ||
+                                        0
+                                    }}
+                                    tokens
                                 </span>
                             </div>
                             <textarea
@@ -639,11 +752,14 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     备用问候语
                                 </label>
                                 <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.alternate_greetings || 0 }} tokens
+                                    {{ tokenCounts.alternate_greetings || 0 }}
+                                    tokens
                                 </span>
                             </div>
                             <textarea
@@ -657,7 +773,9 @@ onUnmounted(async () => {
 
                         <div>
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-semibold text-gray-700">
+                                <label
+                                    class="block text-sm font-semibold text-gray-700"
+                                >
                                     标签
                                 </label>
                                 <span class="text-xs text-gray-500">
@@ -700,6 +818,17 @@ onUnmounted(async () => {
                                 placeholder="角色卡版本号"
                             />
                         </div>
+                    </div>
+
+                    <!-- 世界书编辑器 -->
+                    <div
+                        v-else-if="editorMode === 'worldBook'"
+                        class="flex-1 min-h-0"
+                    >
+                        <WorldBookEditor
+                            v-if="characterUUID"
+                            :character-uuid="characterUUID"
+                        />
                     </div>
                 </div>
             </div>
