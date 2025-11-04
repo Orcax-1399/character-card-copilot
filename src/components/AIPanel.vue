@@ -13,8 +13,14 @@ import { AIChatService, type ChatCompletionOptions } from "@/services/aiChat";
 import { AIToolsService } from "@/services/aiTools";
 import { ChatHistoryManager } from "@/services/chatHistory";
 import type { ChatMessage } from "@/types/api";
-import { listen } from '@tauri-apps/api/event';
-import MarkdownRenderer from './MarkdownRenderer.vue';
+import { listen } from "@tauri-apps/api/event";
+import MarkdownRenderer from "./MarkdownRenderer.vue";
+import CommandPalette from "./CommandPalette.vue";
+import Modal from "./Modal.vue";
+import { commandService } from "@/services/commandService";
+import { getBuiltinCommands } from "@/services/builtinCommands";
+import type { Command, CommandContext } from "@/types/command";
+import type { ModalOptions } from "@/utils/notification";
 
 // 组件props
 const props = defineProps<{
@@ -65,6 +71,15 @@ const chatMessagesRef = ref<HTMLElement>();
 // 编辑相关状态
 const editingContent = ref("");
 
+// 命令面板相关状态
+const showCommandPalette = ref(false);
+const commandPaletteRef = ref<InstanceType<typeof CommandPalette>>();
+const availableCommands = ref<Command[]>([]);
+const filteredCommands = ref<Command[]>([]);
+const commandSearchQuery = ref("");
+const modalOptions = ref<ModalOptions | null>(null);
+const pendingCommand = ref<Command | null>(null);
+
 // 切换显示/隐藏
 function togglePanel() {
     isVisible.value = !isVisible.value;
@@ -92,7 +107,9 @@ async function loadApiConfigs() {
 
         // 优先选择默认配置，如果没有默认配置则选择第一个
         if (apiConfigs.value.length > 0 && !selectedApi.value) {
-            const defaultConfig = apiConfigs.value.find(config => config.default);
+            const defaultConfig = apiConfigs.value.find(
+                (config) => config.default,
+            );
             selectedApi.value = defaultConfig
                 ? defaultConfig.profile
                 : apiConfigs.value[0].profile;
@@ -305,8 +322,8 @@ async function simulateAIResponse() {
 
         // 获取工具（临时强制启用工具进行测试）
         const tools = await convertToolsToChatTools(); // currentRoleConfig.value.tools_enabled
-            // ? await convertToolsToChatTools()
-            // : undefined;
+        // ? await convertToolsToChatTools()
+        // : undefined;
 
         // 构建聊天完成选项
         const options: ChatCompletionOptions = {
@@ -411,8 +428,7 @@ async function convertToolsToChatTools() {
             },
         }));
 
-                return convertedTools;
-
+        return convertedTools;
     } catch (error) {
         console.error("转换工具失败:", error);
         return undefined;
@@ -421,6 +437,28 @@ async function convertToolsToChatTools() {
 
 // 处理键盘事件
 function handleKeydown(event: KeyboardEvent) {
+    // 如果命令面板打开，将键盘事件委托给命令面板处理
+    if (showCommandPalette.value && commandPaletteRef.value) {
+        // 命令面板处理以下按键：ArrowUp, ArrowDown, Enter, Tab, Space, Escape
+        if (
+            ["ArrowUp", "ArrowDown", "Enter", "Tab", " ", "Escape"].includes(
+                event.key,
+            )
+        ) {
+            commandPaletteRef.value.handleKeydown(event);
+            return;
+        }
+    }
+
+    // 检测"/"键触发命令面板
+    // 当且仅当输入框完全为空时，按下"/"才触发命令面板
+    if (event.key === "/" && userInput.value === "") {
+        event.preventDefault();
+        openCommandPalette();
+        return;
+    }
+
+    // 普通发送消息逻辑（Shift+Enter换行，Enter发送）
     if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
         sendMessage();
@@ -438,7 +476,7 @@ function formatTime(date: Date) {
 // 处理AI工具调用
 async function handleToolCalls(toolCalls: any[]) {
     for (const toolCall of toolCalls) {
-        if (toolCall.type === 'function') {
+        if (toolCall.type === "function") {
             const functionName = toolCall.function.name;
             let functionArgs;
 
@@ -465,9 +503,11 @@ async function handleToolCalls(toolCalls: any[]) {
                 const toolResultMessage = {
                     id: generateId(),
                     role: "assistant" as const,
-                    content: `工具执行结果：${result.success ?
-                        `成功更新了${result.data?.update_count || 0}个字段：${result.data?.updated_fields?.map((f: any) => f.description).join('、') || '未知字段'}` :
-                        `失败：${result.error || '未知错误'}`}`,
+                    content: `工具执行结果：${
+                        result.success
+                            ? `成功更新了${result.data?.update_count || 0}个字段：${result.data?.updated_fields?.map((f: any) => f.description).join("、") || "未知字段"}`
+                            : `失败：${result.error || "未知错误"}`
+                    }`,
                     timestamp: new Date(),
                     isEditing: false,
                 };
@@ -493,7 +533,6 @@ async function handleToolCalls(toolCalls: any[]) {
                     // 这里先简单处理，实际可以通过emit通知父组件
                     console.log("角色数据已更新，建议刷新界面");
                 }
-
             } catch (error) {
                 console.error("工具执行失败:", error);
 
@@ -601,12 +640,12 @@ watch(
     () => {
         nextTick(() => {
             if (chatMessagesRef.value) {
-                chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight;
+                chatMessagesRef.value.scrollTop =
+                    chatMessagesRef.value.scrollHeight;
             }
         });
-    }
+    },
 );
-
 
 // 编辑消息
 function editMessage(index: number) {
@@ -740,8 +779,8 @@ async function triggerAIReply(userMessage: string) {
 
         // 获取工具（临时强制启用工具进行测试）
         const tools = await convertToolsToChatTools(); // currentRoleConfig.value.tools_enabled
-            // ? await convertToolsToChatTools()
-            // : undefined;
+        // ? await convertToolsToChatTools()
+        // : undefined;
 
         // 构建聊天完成选项
         const options: ChatCompletionOptions = {
@@ -833,20 +872,211 @@ async function regenerateResponse() {
     }
 }
 
+// ==================== 命令面板相关函数 ====================
+
+/**
+ * 初始化命令系统
+ */
+function initializeCommands() {
+    // 注册内置命令
+    const builtinCommands = getBuiltinCommands();
+    commandService.registerCommands(builtinCommands);
+
+    // 获取所有可用命令
+    updateAvailableCommands();
+}
+
+/**
+ * 更新可用命令列表
+ */
+function updateAvailableCommands() {
+    const context: CommandContext = {
+        messages,
+        chatHistoryManager,
+        userInput,
+        showCommandPalette,
+        characterData: props.characterData,
+    };
+
+    availableCommands.value = commandService.getCommands(context);
+    updateFilteredCommands();
+}
+
+/**
+ * 更新过滤后的命令列表
+ */
+function updateFilteredCommands() {
+    const context: CommandContext = {
+        messages,
+        chatHistoryManager,
+        userInput,
+        showCommandPalette,
+        characterData: props.characterData,
+    };
+
+    const searchResults = commandService.searchCommands(
+        commandSearchQuery.value,
+        context,
+    );
+    filteredCommands.value = searchResults.map((result) => result.command);
+}
+
+/**
+ * 打开命令面板
+ */
+function openCommandPalette() {
+    // 设置用户输入为"/"
+    userInput.value = "/";
+    commandSearchQuery.value = "";
+
+    // 更新可用命令
+    updateAvailableCommands();
+
+    // 显示命令面板
+    showCommandPalette.value = true;
+}
+
+/**
+ * 关闭命令面板
+ */
+function closeCommandPalette() {
+    showCommandPalette.value = false;
+    commandSearchQuery.value = "";
+
+    // 清空输入框中的"/"或以"/"开头的命令
+    if (userInput.value === "/" || userInput.value.startsWith("/")) {
+        userInput.value = "";
+    }
+
+    // 重置输入框高度
+    if (textareaRef.value) {
+        textareaRef.value.style.height = "40px";
+    }
+    inputRows.value = 1;
+}
+
+/**
+ * 处理命令选择
+ */
+async function handleCommandSelect(command: Command) {
+    // 如果命令需要确认，显示确认对话框
+    if (command.requiresConfirmation) {
+        pendingCommand.value = command;
+        modalOptions.value = {
+            title: "确认操作",
+            message: command.confirmationMessage || `确定要执行 ${command.name} 吗？`,
+            type: "danger",
+            confirmText: "确认",
+            cancelText: "取消",
+            onConfirm: async () => {
+                await confirmCommand();
+            },
+            onCancel: () => {
+                cancelCommand();
+            },
+        };
+        return;
+    }
+
+    // 直接执行命令
+    await executeCommand(command);
+}
+
+/**
+ * 执行命令
+ */
+async function executeCommand(command: Command) {
+    try {
+        const context: CommandContext = {
+            messages,
+            chatHistoryManager,
+            userInput,
+            showCommandPalette,
+            characterData: props.characterData,
+        };
+
+        const result = await commandService.executeCommand(command.id, context);
+
+        // 命令执行成功
+        if (result.success) {
+            console.log(`命令 ${command.name} 执行成功:`, result.message);
+            // 可以在这里显示通知（使用右上角通知组件）
+            // TODO: 集成通知系统
+        } else {
+            console.error(`命令 ${command.name} 执行失败:`, result.error);
+            // 可以在这里显示错误通知
+            // TODO: 集成通知系统
+        }
+    } catch (error) {
+        console.error("命令执行失败:", error);
+    }
+}
+
+/**
+ * 确认执行命令
+ */
+async function confirmCommand() {
+    const command = pendingCommand.value;
+    if (command) {
+        // 执行命令
+        await executeCommand(command);
+    }
+
+    // 清理状态
+    pendingCommand.value = null;
+    modalOptions.value = null;
+}
+
+/**
+ * 取消命令执行
+ */
+function cancelCommand() {
+    // 清理状态
+    pendingCommand.value = null;
+    modalOptions.value = null;
+
+    // 关闭命令面板
+    closeCommandPalette();
+}
+
+/**
+ * 监听用户输入变化，更新命令搜索
+ */
+watch(userInput, (newValue) => {
+    if (showCommandPalette.value) {
+        // 如果输入框为空或者输入了斜杠+空格，关闭命令面板
+        // 注意：不要在 newValue === "/" 时关闭，因为这是刚打开命令面板的状态
+        if (newValue === "" || /^\/\s/.test(newValue)) {
+            closeCommandPalette();
+            return;
+        }
+
+        // 提取搜索关键字（去除开头的"/"）
+        commandSearchQuery.value = newValue.replace(/^\//, "");
+        updateFilteredCommands();
+    }
+});
+
 onMounted(async () => {
     loadApiConfigs();
     loadAIRoles();
 
+    // 初始化命令系统
+    initializeCommands();
+
     // 监听工具执行事件，用于调试
-    await listen('tool-executed', (event) => {
-        console.log('🔧 工具执行成功:', event.payload);
+    await listen("tool-executed", (event) => {
+        console.log("🔧 工具执行成功:", event.payload);
         const payload = event.payload as any;
         if (payload) {
             console.log(`工具名称: ${payload.tool_name}`);
             console.log(`角色UUID: ${payload.character_uuid}`);
             console.log(`更新字段数: ${payload.update_count}`);
-            if (payload.updated_fields && Array.isArray(payload.updated_fields)) {
-                console.log('更新详情:');
+            if (
+                payload.updated_fields &&
+                Array.isArray(payload.updated_fields)
+            ) {
+                console.log("更新详情:");
                 payload.updated_fields.forEach((field: any) => {
                     console.log(`  - ${field.field}: ${field.description}`);
                 });
@@ -970,10 +1200,7 @@ onMounted(async () => {
                                 :content="message.content"
                                 class="text-sm"
                             />
-                            <div
-                                v-else
-                                class="text-sm whitespace-pre-wrap"
-                            >
+                            <div v-else class="text-sm whitespace-pre-wrap">
                                 {{ message.content }}
                             </div>
                             <div
@@ -1102,7 +1329,17 @@ onMounted(async () => {
             </div>
 
             <!-- 用户输入区域 -->
-            <div class="border-t border-gray-200 pt-4">
+            <div class="border-t border-gray-200 pt-4 relative">
+                <!-- 命令面板 -->
+                <CommandPalette
+                    ref="commandPaletteRef"
+                    :visible="showCommandPalette"
+                    :commands="filteredCommands"
+                    :searchQuery="commandSearchQuery"
+                    @select="handleCommandSelect"
+                    @close="closeCommandPalette"
+                />
+
                 <div class="flex gap-3">
                     <textarea
                         ref="textareaRef"
@@ -1168,6 +1405,9 @@ onMounted(async () => {
                 </div>
             </div>
         </div>
+
+        <!-- 命令确认对话框 -->
+        <Modal :options="modalOptions" @close="modalOptions = null" />
     </div>
 </template>
 
