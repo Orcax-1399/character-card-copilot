@@ -12,17 +12,31 @@ mod events;
 mod png_utils;
 mod token_counter;
 mod tools;
+mod command_system;
 
 use character_storage::{CharacterStorage, CharacterData, TavernCardV2};
 use api_config::{ApiConfigService, ApiConfig, CreateApiRequest, UpdateApiRequest, ApiTestResult, ModelInfo};
 use ai_config::{AIConfigService, AIRole};
-use ai_tools::{AIToolService, ToolCallRequest, ToolResult, AITool};
-use ai_chat::{AIChatService, ChatCompletionRequest, ChatCompletionResponse};
+use ai_tools::{ToolCallRequest, ToolResult};
+use ai_chat::{AIChatService, ChatCompletionRequest, ChatCompletionResponse, ChatTool};
+use tools::ToolRegistry;
 use chat_history::{ChatHistoryManager, ChatMessage};
 use character_state::{set_active_character, get_active_character, clear_active_character, has_active_character};
-use character_session::{load_character_session, send_chat_message, unload_character_session, get_session_info, get_all_sessions, save_all_sessions, cleanup_expired_sessions};
+use character_session::{
+    load_character_session,
+    send_chat_message,
+    unload_character_session,
+    get_session_info,
+    get_all_sessions,
+    save_all_sessions,
+    cleanup_expired_sessions,
+    delete_chat_message,
+    edit_chat_message,
+    regenerate_last_message,
+};
 use context_builder::build_context;
 use token_counter::{get_token_counter, TokenCountResult};
+use command_system::tauri_commands::{get_available_commands, search_commands, execute_command};
 
 // ====================== 角色卡相关命令 ======================
 
@@ -168,23 +182,23 @@ async fn get_all_ai_roles(app_handle: tauri::AppHandle) -> Result<Vec<(String, A
 // ====================== AI工具相关命令 ======================
 
 #[tauri::command]
-async fn get_available_tools() -> Result<Vec<AITool>, String> {
-    Ok(AIToolService::get_available_tools())
+async fn get_available_tools() -> Result<Vec<ChatTool>, String> {
+    Ok(ToolRegistry::get_available_tools_global())
 }
 
 #[tauri::command]
-async fn get_tools_by_category(category: String) -> Result<Vec<AITool>, String> {
-    Ok(AIToolService::get_tools_by_category(&category))
+async fn get_tools_by_category(category: String) -> Result<Vec<ChatTool>, String> {
+    Ok(ToolRegistry::get_tools_by_category_global(&category))
 }
 
 #[tauri::command]
 async fn execute_tool_call(app_handle: tauri::AppHandle, request: ToolCallRequest) -> Result<ToolResult, String> {
-    Ok(AIToolService::execute_tool_call(&app_handle, request).await)
+    Ok(ToolRegistry::execute_tool_call_global(&app_handle, &request).await)
 }
 
 #[tauri::command]
 async fn get_tool_categories() -> Result<Vec<&'static str>, String> {
-    Ok(AIToolService::get_tool_categories())
+    Ok(ToolRegistry::get_tool_categories_global())
 }
 
 // ====================== AI聊天相关命令 ======================
@@ -234,27 +248,6 @@ async fn clear_chat_history(
 ) -> Result<(), String> {
     let manager = ChatHistoryManager::new(&app_handle, &character_id);
     manager.clear_history()
-}
-
-#[tauri::command]
-async fn delete_chat_message(
-    app_handle: tauri::AppHandle,
-    character_id: String,
-    index: usize,
-) -> Result<(), String> {
-    let manager = ChatHistoryManager::new(&app_handle, &character_id);
-    manager.delete_message(index)
-}
-
-#[tauri::command]
-async fn update_chat_message(
-    app_handle: tauri::AppHandle,
-    character_id: String,
-    index: usize,
-    message: ChatMessage,
-) -> Result<(), String> {
-    let manager = ChatHistoryManager::new(&app_handle, &character_id);
-    manager.update_message(index, &message)
 }
 
 #[tauri::command]
@@ -315,6 +308,13 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|_app| {
+            // 初始化命令系统
+            tauri::async_runtime::spawn(async {
+                command_system::tauri_commands::initialize_command_system().await;
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             // 角色卡命令
             get_all_characters,
@@ -358,8 +358,6 @@ pub fn run() {
             save_chat_message,
             load_chat_history,
             clear_chat_history,
-            delete_chat_message,
-            update_chat_message,
             get_last_chat_message,
             get_recent_chat_messages,
             // 角色状态管理命令
@@ -375,6 +373,9 @@ pub fn run() {
             get_all_sessions,
             save_all_sessions,
             cleanup_expired_sessions,
+            delete_chat_message,
+            edit_chat_message,
+            regenerate_last_message,
             // 上下文构建命令
             build_context,
             // Token 计数命令
@@ -382,6 +383,10 @@ pub fn run() {
             count_tokens_batch,
             check_token_limit,
             truncate_to_token_limit,
+            // 命令系统
+            get_available_commands,
+            search_commands,
+            execute_command,
             // 通用命令
             generate_uuid
         ])

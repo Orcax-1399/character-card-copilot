@@ -1,8 +1,10 @@
-use async_trait::async_trait;
-use tauri::{AppHandle, Emitter};
 use super::AIToolTrait;
-use crate::ai_tools::{ToolResult, ToolCallRequest, ToolParameter};
-use crate::character_storage::{CharacterStorage, CharacterBook, WorldBookEntry};
+use crate::ai_tools::{ToolCallRequest, ToolResult};
+use crate::ai_chat::{ChatTool, ToolFunction, ToolParameters, ToolParameter as ChatToolParameter};
+use crate::character_storage::{CharacterBook, CharacterStorage, WorldBookEntry};
+use async_trait::async_trait;
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
 
 /// 世界书条目创建工具
 pub struct CreateWorldBookEntryTool;
@@ -14,117 +16,11 @@ impl AIToolTrait for CreateWorldBookEntryTool {
     }
 
     fn description(&self) -> &'static str {
-        "为当前角色创建新的世界书条目。必填参数：keys（关键词，多个关键词用逗号分隔）、content（内容）、depth（插入深度）、comment（备注）、probability（触发概率）。选填参数：name（条目名称）、enabled（是否启用，默认true）、priority（优先级，默认10）、position（位置，默认before_char）以及extension相关参数"
+        "为当前角色创建新的世界书条目。必填参数：keys（关键词，多个关键词用逗号分隔）、content（内容）、depth（插入深度）、comment（备注）、probability（触发概率）。选填参数：name（条目名称）、enabled（是否启用，默认true）、priority（优先级，默认10）、position（位置，默认before_char）以及extension相关参数。"
     }
 
     fn category(&self) -> &'static str {
         "character"
-    }
-
-    fn parameters(&self) -> Vec<ToolParameter> {
-        vec![
-            // 提示字段
-            ToolParameter {
-                name: "at_least_one_field".to_string(),
-                description: "必须提供至少一个要编辑的字段".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: Some(serde_json::json!({
-                    "type": "string",
-                    "enum": ["create_world_book_entry"]
-                })),
-            },
-
-            // 必填参数
-            ToolParameter {
-                name: "keys".to_string(),
-                description: "关键词，多个关键词用逗号分隔".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: None,
-            },
-            ToolParameter {
-                name: "content".to_string(),
-                description: "条目内容".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: None,
-            },
-            ToolParameter {
-                name: "depth".to_string(),
-                description: "插入深度（数字，通常1-10）".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: None,
-            },
-            ToolParameter {
-                name: "comment".to_string(),
-                description: "备注说明".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: None,
-            },
-            ToolParameter {
-                name: "probability".to_string(),
-                description: "触发概率（数字0-100）".to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: None,
-            },
-
-            // 选填参数
-            ToolParameter {
-                name: "name".to_string(),
-                description: "条目名称".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "enabled".to_string(),
-                description: "是否启用（true/false）".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "priority".to_string(),
-                description: "优先级（数字）".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "position".to_string(),
-                description: "位置（before_char/after_char）".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-
-            // extension 相关参数
-            ToolParameter {
-                name: "scan_depth".to_string(),
-                description: "扫描深度".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "token_budget".to_string(),
-                description: "令牌预算".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "recursive_scanning".to_string(),
-                description: "递归扫描（true/false）".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-        ]
     }
 
     async fn execute(&self, app_handle: &AppHandle, request: &ToolCallRequest) -> ToolResult {
@@ -157,29 +53,33 @@ impl AIToolTrait for CreateWorldBookEntryTool {
         }
 
         // 获取当前角色数据
-        let mut character_data = match CharacterStorage::get_character_by_uuid(app_handle, &character_uuid) {
-            Ok(Some(data)) => data,
-            Ok(None) => {
-                return ToolResult {
-                    success: false,
-                    data: None,
-                    error: Some("角色不存在".to_string()),
-                    execution_time_ms: start_time.elapsed().as_millis() as u64,
-                };
-            }
-            Err(e) => {
-                return ToolResult {
-                    success: false,
-                    data: None,
-                    error: Some(format!("获取角色数据失败: {}", e)),
-                    execution_time_ms: start_time.elapsed().as_millis() as u64,
-                };
-            }
-        };
+        let mut character_data =
+            match CharacterStorage::get_character_by_uuid(app_handle, &character_uuid) {
+                Ok(Some(data)) => data,
+                Ok(None) => {
+                    return ToolResult {
+                        success: false,
+                        data: None,
+                        error: Some("角色不存在".to_string()),
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    };
+                }
+                Err(e) => {
+                    return ToolResult {
+                        success: false,
+                        data: None,
+                        error: Some(format!("获取角色数据失败: {}", e)),
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                    };
+                }
+            };
 
         // 确保世界书存在
-        let world_book = character_data.card.data.character_book.get_or_insert_with(|| {
-            CharacterBook {
+        let world_book = character_data
+            .card
+            .data
+            .character_book
+            .get_or_insert_with(|| CharacterBook {
                 name: None,
                 description: None,
                 scan_depth: Some(2),
@@ -187,27 +87,32 @@ impl AIToolTrait for CreateWorldBookEntryTool {
                 recursive_scanning: Some(false),
                 extensions: serde_json::json!({}),
                 entries: Vec::new(),
-            }
-        });
+            });
 
         // 生成新条目ID
         let new_id = if world_book.entries.is_empty() {
             1
         } else {
-            world_book.entries.iter()
+            world_book
+                .entries
+                .iter()
                 .filter_map(|e| e.id)
                 .max()
-                .unwrap_or(0) + 1
+                .unwrap_or(0)
+                + 1
         };
 
         // 计算插入顺序
         let insertion_order = if world_book.entries.is_empty() {
             1
         } else {
-            world_book.entries.iter()
+            world_book
+                .entries
+                .iter()
                 .map(|e| e.insertion_order)
                 .max()
-                .unwrap_or(0) + 1
+                .unwrap_or(0)
+                + 1
         };
 
         // 创建默认extensions
@@ -352,7 +257,8 @@ impl AIToolTrait for CreateWorldBookEntryTool {
         world_book.entries.push(new_entry.clone());
 
         // 保存角色数据
-        match CharacterStorage::update_character(app_handle, &character_uuid, &character_data.card) {
+        match CharacterStorage::update_character(app_handle, &character_uuid, &character_data.card)
+        {
             Ok(()) => {
                 // 发送事件通知前端
                 if let Err(e) = app_handle.emit(
@@ -365,20 +271,6 @@ impl AIToolTrait for CreateWorldBookEntryTool {
                     }),
                 ) {
                     eprintln!("发送世界书条目创建事件失败: {}", e);
-                }
-
-                // 发送工具执行成功事件
-                if let Err(e) = app_handle.emit(
-                    "tool-executed",
-                    serde_json::json!({
-                        "tool_name": "create_world_book_entry",
-                        "character_uuid": character_uuid,
-                        "entry_id": new_id,
-                        "entry_name": new_entry.name,
-                        "keys_count": new_entry.keys.len()
-                    }),
-                ) {
-                    eprintln!("发送工具执行事件失败: {}", e);
                 }
 
                 ToolResult {
@@ -403,6 +295,189 @@ impl AIToolTrait for CreateWorldBookEntryTool {
                 data: None,
                 error: Some(format!("保存世界书条目失败: {}", e)),
                 execution_time_ms: start_time.elapsed().as_millis() as u64,
+            },
+        }
+    }
+
+    fn to_chat_tool(&self) -> ChatTool {
+        let mut properties = HashMap::new();
+
+        // 提示字段
+        properties.insert(
+            "at_least_one_field".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("必须提供至少一个要编辑的字段".to_string()),
+                enum_values: Some(vec!["create_world_book_entry".to_string()]),
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        // 必填参数
+        properties.insert(
+            "keys".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("关键词, 多个关键词用逗号分隔, 用于触发条目".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "content".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("条目内容,尽量简短,避免浪费过多token".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "depth".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("插入深度（数字，通常1-10）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "comment".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("备注，需要简短，格式为<function>[10字/words以内概括]".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "probability".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("触发概率（数字0-100）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        // 选填参数
+        properties.insert(
+            "name".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("条目名称".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "enabled".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("是否启用（true/false）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "priority".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("优先级（数字）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "position".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("位置（before_char/after_char）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "scan_depth".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("扫描深度".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "token_budget".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("令牌预算".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "recursive_scanning".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("递归扫描（true/false）".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        ChatTool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: self.name().to_string(),
+                description: Some(self.description().to_string()),
+                parameters: Some(ToolParameters {
+                    param_type: "object".to_string(),
+                    properties,
+                    required: Some(vec![
+                        "at_least_one_field".to_string(),
+                        "keys".to_string(),
+                        "content".to_string(),
+                        "depth".to_string(),
+                        "comment".to_string(),
+                        "probability".to_string(),
+                    ]),
+                }),
             },
         }
     }

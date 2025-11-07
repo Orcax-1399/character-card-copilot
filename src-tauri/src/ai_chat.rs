@@ -470,6 +470,12 @@ impl AIChatService {
                         // 执行工具调用
                         if let Some(app_handle) = app_handle {
                             messages.push(choice.message.clone());
+
+                            // 获取当前角色UUID用于事件发送
+                            let character_uuid = crate::character_state::CHARACTER_STATE
+                                .get_current_character()
+                                .unwrap_or_else(|| "unknown".to_string());
+
                             for tool_call in tool_calls {
                                 if let Some(tool_result) = Self::execute_single_tool_call(
                                     app_handle,
@@ -479,6 +485,31 @@ impl AIChatService {
                                 )
                                 .await
                                 {
+                                    // 解析工具执行结果
+                                    let success = tool_result.get("success")
+                                        .and_then(|v| v.as_bool())
+                                        .unwrap_or(false);
+                                    let data = tool_result.get("data").cloned();
+                                    let error = tool_result.get("error")
+                                        .and_then(|v| v.as_str())
+                                        .map(|s| s.to_string());
+                                    let execution_time_ms = tool_result.get("execution_time_ms")
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(0);
+
+                                    // 发送工具执行事件
+                                    if let Err(e) = crate::events::EventEmitter::send_tool_executed(
+                                        app_handle,
+                                        &character_uuid,
+                                        &tool_call.function.name,
+                                        success,
+                                        data.clone(),
+                                        error.clone(),
+                                        execution_time_ms,
+                                    ) {
+                                        eprintln!("发送工具执行事件失败: {}", e);
+                                    }
+
                                     // 将工具结果添加到消息列表
                                     messages.push(ChatMessage {
                                         role: MessageRole::Tool,
@@ -490,6 +521,18 @@ impl AIChatService {
                                     });
                                 } else {
                                     // 工具执行失败
+                                    if let Err(e) = crate::events::EventEmitter::send_tool_executed(
+                                        app_handle,
+                                        &character_uuid,
+                                        &tool_call.function.name,
+                                        false,
+                                        None,
+                                        Some("Tool execution failed".to_string()),
+                                        0,
+                                    ) {
+                                        eprintln!("发送工具执行失败事件失败: {}", e);
+                                    }
+
                                     messages.push(ChatMessage {
                                         role: MessageRole::Tool,
                                         content: serde_json::json!({
@@ -548,7 +591,7 @@ impl AIChatService {
 
         // 执行工具调用
         let result =
-            crate::ai_tools::AIToolService::execute_tool_call(app_handle, tool_request).await;
+            crate::tools::ToolRegistry::execute_tool_call_global(app_handle, &tool_request).await;
 
         if result.success {
             Some(serde_json::json!({

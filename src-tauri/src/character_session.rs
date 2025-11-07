@@ -1,13 +1,14 @@
-use crate::chat_history::{ChatMessage, ChatHistoryManager};
+use crate::ai_chat::{ChatCompletionRequest, ChatMessage as AIChatMessage};
 use crate::character_storage::CharacterData;
-use crate::events::{EventEmitter, CharacterUpdateType, SessionUnloadReason};
-use crate::ai_chat::{AIChatService, ChatCompletionRequest, ChatMessage as AIChatMessage};
+use crate::tools::ToolRegistry;
+use crate::chat_history::{ChatHistoryManager, ChatMessage};
+use crate::events::{CharacterUpdateType, EventEmitter, SessionUnloadReason};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
-use chrono::{DateTime, Utc};
 
 /// Token 预算分配策略
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +59,7 @@ impl Default for ContextBuilderOptions {
     fn default() -> Self {
         let mut placeholders = HashMap::new();
         placeholders.insert("{{ROLE}}".to_string(), "角色卡编写助手".to_string());
-        placeholders.insert("{{TASK}}".to_string(), "帮助用户创作和完善角色设定".to_string());
+        placeholders.insert("{{TASK}}".to_string(), "帮助用户创作和完善角色设定, 需要从多个角度(角色动机，角色心理，角色性格，角色背景)等分析，完成角色卡。当用户要求(帮忙填写)的时候，主动使用工具(edit_character)填写用户要求的field。当用户确认添加worldbook条目的时候，使用工具(create_world_book_entry)".to_string());
 
         Self {
             token_limit: 102400,
@@ -127,8 +128,9 @@ impl CharacterSession {
     /// 加载现有角色的会话
     pub fn load(app_handle: &AppHandle, uuid: String) -> Result<Self, String> {
         // 加载角色数据
-        let character_data = crate::character_storage::CharacterStorage::get_character_by_uuid(app_handle, &uuid)?
-            .ok_or_else(|| format!("角色 {} 不存在", uuid))?;
+        let character_data =
+            crate::character_storage::CharacterStorage::get_character_by_uuid(app_handle, &uuid)?
+                .ok_or_else(|| format!("角色 {} 不存在", uuid))?;
 
         // 加载聊天历史
         let history_manager = ChatHistoryManager::new(app_handle, &uuid);
@@ -154,7 +156,7 @@ impl CharacterSession {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() as i64
+                    .as_secs() as i64,
             ),
         };
 
@@ -164,7 +166,11 @@ impl CharacterSession {
     }
 
     /// 添加 AI 响应消息到历史记录
-    pub fn add_assistant_message(&mut self, content: String, tool_calls: Option<Vec<crate::chat_history::ToolCall>>) -> ChatMessage {
+    pub fn add_assistant_message(
+        &mut self,
+        content: String,
+        tool_calls: Option<Vec<crate::chat_history::ToolCall>>,
+    ) -> ChatMessage {
         let message = ChatMessage {
             role: "assistant".to_string(),
             content,
@@ -175,7 +181,7 @@ impl CharacterSession {
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_secs() as i64
+                    .as_secs() as i64,
             ),
         };
 
@@ -212,8 +218,58 @@ impl CharacterSession {
         self.last_active = Utc::now();
     }
 
+    /// 删除指定索引的消息
+    pub fn delete_message(&mut self, index: usize) -> Result<ChatMessage, String> {
+        if index >= self.chat_history.len() {
+            return Err(format!(
+                "消息索引 {} 超出范围（共 {} 条消息）",
+                index,
+                self.chat_history.len()
+            ));
+        }
+
+        let removed = self.chat_history.remove(index);
+        self.last_active = Utc::now();
+        Ok(removed)
+    }
+
+    /// 编辑指定索引的消息内容
+    pub fn edit_message(
+        &mut self,
+        index: usize,
+        new_content: String,
+    ) -> Result<ChatMessage, String> {
+        if index >= self.chat_history.len() {
+            return Err(format!(
+                "消息索引 {} 超出范围（共 {} 条消息）",
+                index,
+                self.chat_history.len()
+            ));
+        }
+
+        self.chat_history[index].content = new_content;
+        self.last_active = Utc::now();
+        Ok(self.chat_history[index].clone())
+    }
+
+    /// 删除最后一条消息（用于重新生成）
+    pub fn delete_last_message(&mut self) -> Result<ChatMessage, String> {
+        if self.chat_history.is_empty() {
+            return Err("聊天历史为空，无法删除".to_string());
+        }
+
+        let removed = self.chat_history.pop().unwrap();
+        self.last_active = Utc::now();
+        Ok(removed)
+    }
+
     /// 更新角色数据并发送事件
-    pub fn update_character_data(&mut self, app: &AppHandle, character_data: CharacterData, update_type: CharacterUpdateType) -> Result<(), String> {
+    pub fn update_character_data(
+        &mut self,
+        app: &AppHandle,
+        character_data: CharacterData,
+        update_type: CharacterUpdateType,
+    ) -> Result<(), String> {
         self.character_data = character_data.clone();
         self.last_active = Utc::now();
 
@@ -240,8 +296,22 @@ impl CharacterSession {
         let mut result = template.to_string();
 
         // 替换基本占位符
-        result = result.replace("{{ROLE}}", &self.context_config.placeholders.get("{{ROLE}}").unwrap_or(&"角色卡编写助手".to_string()));
-        result = result.replace("{{TASK}}", &self.context_config.placeholders.get("{{TASK}}").unwrap_or(&"帮助用户创作和完善角色设定".to_string()));
+        result = result.replace(
+            "{{ROLE}}",
+            &self
+                .context_config
+                .placeholders
+                .get("{{ROLE}}")
+                .unwrap_or(&"角色卡编写助手".to_string()),
+        );
+        result = result.replace(
+            "{{TASK}}",
+            &self
+                .context_config
+                .placeholders
+                .get("{{TASK}}")
+                .unwrap_or(&"帮助用户创作和完善角色设定".to_string()),
+        );
 
         // 替换角色相关占位符
         result = result.replace("{{CHARACTER_NAME}}", &self.character_data.card.data.name);
@@ -291,8 +361,14 @@ impl SessionManager {
     }
 
     /// 获取或创建角色会话
-    pub fn get_or_create_session(&self, app_handle: &AppHandle, uuid: String) -> Result<CharacterSession, String> {
-        let mut sessions = self.sessions.lock()
+    pub fn get_or_create_session(
+        &self,
+        app_handle: &AppHandle,
+        uuid: String,
+    ) -> Result<CharacterSession, String> {
+        let mut sessions = self
+            .sessions
+            .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))?;
 
         // 如果会话已存在，返回现有会话
@@ -314,7 +390,9 @@ impl SessionManager {
 
     /// 更新会话
     pub fn update_session(&self, session: CharacterSession) -> Result<(), String> {
-        let mut sessions = self.sessions.lock()
+        let mut sessions = self
+            .sessions
+            .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))?;
 
         sessions.insert(session.uuid.clone(), session);
@@ -323,7 +401,9 @@ impl SessionManager {
 
     /// 移除会话
     pub fn remove_session(&self, uuid: &str) -> Result<Option<CharacterSession>, String> {
-        let mut sessions = self.sessions.lock()
+        let mut sessions = self
+            .sessions
+            .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))?;
 
         Ok(sessions.remove(uuid))
@@ -331,21 +411,28 @@ impl SessionManager {
 
     /// 获取所有活跃会话信息
     pub fn get_all_sessions_info(&self) -> Result<Vec<SessionInfo>, String> {
-        let sessions = self.sessions.lock()
+        let sessions = self
+            .sessions
+            .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))?;
 
-        Ok(sessions.values()
+        Ok(sessions
+            .values()
             .map(|session| session.get_session_info())
             .collect())
     }
 
     /// 清理旧的会话
-    fn cleanup_old_sessions(&self, sessions: &mut HashMap<String, CharacterSession>) -> Result<(), String> {
+    fn cleanup_old_sessions(
+        &self,
+        sessions: &mut HashMap<String, CharacterSession>,
+    ) -> Result<(), String> {
         // 按最后活跃时间排序，移除最旧的会话
-        if let Some((oldest_uuid, _)) = sessions.iter()
+        if let Some((oldest_uuid, _)) = sessions
+            .iter()
             .min_by_key(|(_, session)| session.last_active)
-            .map(|(uuid, _)| (uuid.clone(), ())) {
-
+            .map(|(uuid, _)| (uuid.clone(), ()))
+        {
             eprintln!("清理旧会话: {}", oldest_uuid);
             sessions.remove(&oldest_uuid);
         }
@@ -373,8 +460,11 @@ lazy_static::lazy_static! {
 
 impl SessionManager {
     /// 获取会话映射的内部引用（用于清理过期会话）
-    pub fn get_sessions_map(&self) -> Result<std::sync::MutexGuard<HashMap<String, CharacterSession>>, String> {
-        self.sessions.lock()
+    pub fn get_sessions_map(
+        &self,
+    ) -> Result<std::sync::MutexGuard<HashMap<String, CharacterSession>>, String> {
+        self.sessions
+            .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))
     }
 }
@@ -383,7 +473,10 @@ impl SessionManager {
 
 /// 加载角色会话
 #[tauri::command]
-pub async fn load_character_session(app_handle: tauri::AppHandle, uuid: String) -> Result<SessionInfo, String> {
+pub async fn load_character_session(
+    app_handle: tauri::AppHandle,
+    uuid: String,
+) -> Result<SessionInfo, String> {
     let session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid)?;
 
     // 发送事件到前端
@@ -406,8 +499,7 @@ pub async fn send_chat_message(
     message: String,
 ) -> Result<(), String> {
     // 获取当前活跃角色会话
-    let uuid = crate::character_state::get_active_character()
-        .ok_or("没有活跃的角色会话")?;
+    let uuid = crate::character_state::get_active_character().ok_or("没有活跃的角色会话")?;
 
     let mut session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid.clone())?;
 
@@ -419,19 +511,27 @@ pub async fn send_chat_message(
 
     // 使用上下文构建器构建完整上下文
     let context_builder = crate::context_builder::create_default_context_builder();
-    let context_result = context_builder.build_full_context(
-        &session.character_data,
-        &session.chat_history,
-        None, // 当前消息已添加到历史记录中
-    ).map_err(|e| format!("构建上下文失败: {}", e))?;
+    let context_result = context_builder
+        .build_full_context(
+            &session.character_data,
+            &session.chat_history,
+            None, // 当前消息已添加到历史记录中
+        )
+        .map_err(|e| format!("构建上下文失败: {}", e))?;
 
     // 发送上下文构建完成事件
     EventEmitter::send_context_built(&app_handle, &session.uuid, &context_result)?;
 
-    // 构建 AIChatMessage 格式的消息数组
+    // ==================== 按照标准顺序构建消息 ====================
+    // 1️⃣ System / Role Prompt （定义模型身份、语气、核心目标）
+    // 2️⃣ Task / Objective      （本次会话目标、任务说明）
+    // 3️⃣ Character_Information （角色卡：背景、性格、偏好、知识、记忆）
+    // 4️⃣ History               （过去的 user / assistant 对话）
+    // 5️⃣ User Reply            （当前用户输入）
+    // 注：Tools 通过 request.tools 参数传递，不放在消息中
     let mut ai_chat_messages = Vec::new();
 
-    // 添加 System 消息
+    // 1️⃣ System / Role Prompt + 2️⃣ Task / Objective
     for msg in context_result.system_messages {
         ai_chat_messages.push(AIChatMessage {
             role: crate::ai_chat::MessageRole::System,
@@ -442,10 +542,11 @@ pub async fn send_chat_message(
         });
     }
 
-    // 添加 Assistant 消息（角色信息 + 世界书）
+    // 3️⃣ Character_Information（角色信息 + 世界书）
+    // 使用 System 角色而非 Assistant，避免破坏对话时间线
     for msg in context_result.assistant_messages {
         ai_chat_messages.push(AIChatMessage {
-            role: crate::ai_chat::MessageRole::Assistant,
+            role: crate::ai_chat::MessageRole::System,
             content: msg.content,
             name: msg.name,
             tool_calls: None,
@@ -453,12 +554,13 @@ pub async fn send_chat_message(
         });
     }
 
-    // 添加历史消息
+    // 4️⃣ History（历史对话）
     ai_chat_messages.extend(context_result.history_messages.iter().map(|msg| {
         let role = match msg.role.as_str() {
             "user" => crate::ai_chat::MessageRole::User,
             "assistant" => crate::ai_chat::MessageRole::Assistant,
             "system" => crate::ai_chat::MessageRole::System,
+            "tool" => crate::ai_chat::MessageRole::Tool,
             _ => crate::ai_chat::MessageRole::User,
         };
 
@@ -471,25 +573,27 @@ pub async fn send_chat_message(
         }
     }));
 
-    // 添加当前用户消息
+    // 5️⃣ User Reply / Current Input（当前用户输入）
     if let Some(current_msg) = context_result.current_user_message {
         ai_chat_messages.push(AIChatMessage {
             role: crate::ai_chat::MessageRole::User,
             content: current_msg.content,
             name: current_msg.name,
-            tool_calls: None, // 暂时简化，不转换tool_calls
+            tool_calls: None,
             tool_call_id: current_msg.tool_call_id,
         });
     }
 
     // 获取默认API配置
     use crate::api_config::ApiConfigService;
-    use crate::api_config::ApiConfig;
-    let api_config = ApiConfigService::get_default_api_config(&app_handle)?
-        .ok_or("没有可用的API配置")?;
+    let api_config =
+        ApiConfigService::get_default_api_config(&app_handle)?.ok_or("没有可用的API配置")?;
 
     // 记录消息数量
     let message_count = ai_chat_messages.len();
+
+    // 获取可用工具定义
+    let chat_tools = ToolRegistry::get_available_tools_global();
 
     // 构建聊天完成请求
     let request = ChatCompletionRequest {
@@ -502,8 +606,8 @@ pub async fn send_chat_message(
         presence_penalty: None,
         stop: None,
         stream: Some(false),
-        tools: None,
-        tool_choice: None,
+        tools: Some(chat_tools), // ✅ 添加工具定义
+        tool_choice: Some(crate::ai_chat::ToolChoice::String("auto".to_string())), // ✅ 让AI自动决定
     };
 
     // 调用真实的AI服务
@@ -518,65 +622,47 @@ pub async fn send_chat_message(
         &api_config,
         &request,
         Some(&app_handle), // 传入 app_handle 以支持工具调用
-    ).await
+    )
+    .await
     .map_err(|e| format!("AI API调用失败: {}", e))?;
 
-    let execution_time = start_time.elapsed().as_millis() as u64;
+    let _execution_time = start_time.elapsed().as_millis() as u64;
 
     // 提取AI响应内容
-    let ai_content = ai_response_result.choices
+    let ai_content = ai_response_result
+        .choices
         .first()
         .map(|choice| choice.message.content.clone())
         .unwrap_or_else(|| "AI未返回响应".to_string());
 
     // 提取工具调用（如果有）
-    let tool_calls_data = ai_response_result.choices
+    let tool_calls_data = ai_response_result
+        .choices
         .first()
         .and_then(|choice| choice.message.tool_calls.clone());
 
     // 转换工具调用格式（从 ai_chat::ToolCallData 到 chat_history::ToolCall）
     let converted_tool_calls = tool_calls_data.as_ref().map(|calls| {
-        calls.iter().map(|call| {
-            crate::chat_history::ToolCall {
+        calls
+            .iter()
+            .map(|call| crate::chat_history::ToolCall {
                 id: call.id.clone(),
                 r#type: call.call_type.clone(),
                 function: crate::chat_history::ToolFunction {
                     name: call.function.name.clone(),
                     arguments: call.function.arguments.clone(),
                 },
-            }
-        }).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
     });
 
     // 添加AI响应到历史记录
-    let ai_response = session.add_assistant_message(
-        ai_content.clone(),
-        converted_tool_calls,
-    );
+    let ai_response = session.add_assistant_message(ai_content.clone(), converted_tool_calls);
 
     // 发送 AI 响应事件
     EventEmitter::send_message_received(&app_handle, &session.uuid, &ai_response)?;
 
-    // 如果有工具调用，发送工具执行事件（工具已经在 ai_chat.rs 中自动执行）
-    if let Some(tool_calls) = tool_calls_data {
-        for tool_call in tool_calls {
-            println!("工具已执行: {} (ID: {})", tool_call.function.name, tool_call.id);
-            // 发送工具执行成功事件
-            crate::events::EventEmitter::send_tool_executed(
-                &app_handle,
-                &session.uuid,
-                &tool_call.function.name,
-                true,
-                Some(serde_json::json!({
-                    "tool_call_id": tool_call.id,
-                    "function_name": tool_call.function.name,
-                    "arguments": tool_call.function.arguments,
-                })),
-                None,
-                execution_time,
-            )?;
-        }
-    }
+    // 注：工具执行事件已在 ai_chat.rs 中的工具执行时发送，无需在此重复发送
 
     // 发送真实的Token统计事件
     let token_stats = crate::events::TokenUsageStats {
@@ -599,7 +685,9 @@ pub async fn send_chat_message(
     )?;
 
     // 保存历史记录
-    session.save_history(&app_handle).await
+    session
+        .save_history(&app_handle)
+        .await
         .map_err(|e| format!("保存历史记录失败: {}", e))?;
 
     // 更新会话状态
@@ -610,7 +698,10 @@ pub async fn send_chat_message(
 
 /// 卸载角色会话
 #[tauri::command]
-pub async fn unload_character_session(app_handle: tauri::AppHandle, uuid: String) -> Result<(), String> {
+pub async fn unload_character_session(
+    app_handle: tauri::AppHandle,
+    uuid: String,
+) -> Result<(), String> {
     // 在卸载前保存历史记录
     if let Some(session) = SESSION_MANAGER.get_session(&uuid) {
         if let Err(e) = session.save_history(&app_handle).await {
@@ -625,7 +716,12 @@ pub async fn unload_character_session(app_handle: tauri::AppHandle, uuid: String
 
         // 发送会话卸载事件
         let session_info = session.get_session_info();
-        if let Err(e) = EventEmitter::send_session_unloaded(&app_handle, &uuid, &session_info, SessionUnloadReason::UserRequest) {
+        if let Err(e) = EventEmitter::send_session_unloaded(
+            &app_handle,
+            &uuid,
+            &session_info,
+            SessionUnloadReason::UserRequest,
+        ) {
             eprintln!("发送会话卸载事件失败: {}", e);
         }
     }
@@ -636,7 +732,8 @@ pub async fn unload_character_session(app_handle: tauri::AppHandle, uuid: String
 /// 获取会话信息
 #[tauri::command]
 pub async fn get_session_info(uuid: String) -> Result<SessionInfo, String> {
-    let session = SESSION_MANAGER.get_session(&uuid)
+    let session = SESSION_MANAGER
+        .get_session(&uuid)
         .ok_or_else(|| format!("会话 {} 不存在", uuid))?;
 
     Ok(session.get_session_info())
@@ -675,10 +772,9 @@ pub async fn cleanup_expired_sessions(max_age_hours: u64) -> Result<usize, Strin
     let max_duration = chrono::Duration::hours(max_age_hours as i64);
     let mut removed_count = 0;
 
-    let expired_sessions: Vec<String> = sessions.iter()
-        .filter(|(_, session)| {
-            now.signed_duration_since(session.last_active) > max_duration
-        })
+    let expired_sessions: Vec<String> = sessions
+        .iter()
+        .filter(|(_, session)| now.signed_duration_since(session.last_active) > max_duration)
         .map(|(uuid, _)| uuid.clone())
         .collect();
 
@@ -689,4 +785,264 @@ pub async fn cleanup_expired_sessions(max_age_hours: u64) -> Result<usize, Strin
     }
 
     Ok(removed_count)
+}
+
+/// 删除指定索引的消息
+#[tauri::command]
+pub async fn delete_chat_message(app_handle: tauri::AppHandle, index: usize) -> Result<(), String> {
+    // 获取当前活跃角色会话
+    let uuid = crate::character_state::get_active_character().ok_or("没有活跃的角色会话")?;
+
+    let mut session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid.clone())?;
+
+    // 删除消息
+    let deleted_message = session.delete_message(index)?;
+
+    // 保存历史记录
+    session.save_history(&app_handle).await?;
+
+    // 更新会话
+    SESSION_MANAGER.update_session(session)?;
+
+    println!("删除消息 [{}]: {:?}", index, deleted_message.content);
+
+    Ok(())
+}
+
+/// 编辑指定索引的消息
+#[tauri::command]
+pub async fn edit_chat_message(
+    app_handle: tauri::AppHandle,
+    index: usize,
+    new_content: String,
+) -> Result<(), String> {
+    // 获取当前活跃角色会话
+    let uuid = crate::character_state::get_active_character().ok_or("没有活跃的角色会话")?;
+
+    let mut session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid.clone())?;
+
+    // 编辑消息
+    let edited_message = session.edit_message(index, new_content)?;
+
+    // 保存历史记录
+    session.save_history(&app_handle).await?;
+
+    // 更新会话
+    SESSION_MANAGER.update_session(session)?;
+
+    println!("编辑消息 [{}]: {:?}", index, edited_message.content);
+
+    Ok(())
+}
+
+/// 重新生成最后一条AI回复
+#[tauri::command]
+pub async fn regenerate_last_message(app_handle: tauri::AppHandle) -> Result<(), String> {
+    // 获取当前活跃角色会话
+    let uuid = crate::character_state::get_active_character().ok_or("没有活跃的角色会话")?;
+
+    let mut session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid.clone())?;
+
+    // 检查历史记录是否为空
+    if session.chat_history.is_empty() {
+        return Err("聊天历史为空，无法重新生成".to_string());
+    }
+
+    // 检查最后一条消息是否是AI回复
+    let last_message = session.chat_history.last().ok_or("聊天历史为空")?;
+    if last_message.role != "assistant" {
+        return Err("最后一条消息不是AI回复，无法重新生成".to_string());
+    }
+
+    // 删除最后一条AI回复
+    session.delete_last_message()?;
+
+    // 保存历史记录（删除后的状态）
+    session.save_history(&app_handle).await?;
+
+    // 获取倒数第二条消息（应该是用户消息）
+    let user_message = session
+        .chat_history
+        .last()
+        .ok_or("没有用户消息，无法重新生成")?;
+
+    if user_message.role != "user" {
+        return Err("倒数第二条消息不是用户消息，无法重新生成".to_string());
+    }
+
+    let user_message_content = user_message.content.clone();
+
+    // 更新会话（删除消息后）
+    SESSION_MANAGER.update_session(session.clone())?;
+
+    println!("重新生成消息，基于用户消息: {:?}", user_message_content);
+
+    // 使用上下文构建器构建完整上下文
+    let context_builder = crate::context_builder::create_default_context_builder();
+    let context_result = context_builder
+        .build_full_context(
+            &session.character_data,
+            &session.chat_history,
+            None, // 用户消息已在历史记录中
+        )
+        .map_err(|e| format!("构建上下文失败: {}", e))?;
+
+    // 发送上下文构建完成事件
+    EventEmitter::send_context_built(&app_handle, &session.uuid, &context_result)?;
+
+    // ==================== 按照标准顺序构建消息 ====================
+    // 1️⃣ System / Role Prompt （定义模型身份、语气、核心目标）
+    // 2️⃣ Task / Objective      （本次会话目标、任务说明）
+    // 3️⃣ Character_Information （角色卡：背景、性格、偏好、知识、记忆）
+    // 4️⃣ History               （过去的 user / assistant 对话）
+    // 5️⃣ User Reply            （当前用户输入）
+    // 注：Tools 通过 request.tools 参数传递，不放在消息中
+    let mut ai_chat_messages = Vec::new();
+
+    // 1️⃣ System / Role Prompt + 2️⃣ Task / Objective
+    for msg in context_result.system_messages {
+        ai_chat_messages.push(AIChatMessage {
+            role: crate::ai_chat::MessageRole::System,
+            content: msg.content,
+            name: msg.name,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+
+    // 3️⃣ Character_Information（角色信息 + 世界书）
+    // 使用 System 角色而非 Assistant，避免破坏对话时间线
+    for msg in context_result.assistant_messages {
+        ai_chat_messages.push(AIChatMessage {
+            role: crate::ai_chat::MessageRole::System,
+            content: msg.content,
+            name: msg.name,
+            tool_calls: None,
+            tool_call_id: None,
+        });
+    }
+
+    // 4️⃣ History（历史对话）
+    ai_chat_messages.extend(context_result.history_messages.iter().map(|msg| {
+        let role = match msg.role.as_str() {
+            "user" => crate::ai_chat::MessageRole::User,
+            "assistant" => crate::ai_chat::MessageRole::Assistant,
+            "system" => crate::ai_chat::MessageRole::System,
+            "tool" => crate::ai_chat::MessageRole::Tool,
+            _ => crate::ai_chat::MessageRole::User,
+        };
+
+        AIChatMessage {
+            role,
+            content: msg.content.clone(),
+            name: msg.name.clone(),
+            tool_calls: None,
+            tool_call_id: msg.tool_call_id.clone(),
+        }
+    }));
+
+    // 获取默认API配置
+    use crate::api_config::ApiConfigService;
+    let api_config =
+        ApiConfigService::get_default_api_config(&app_handle)?.ok_or("没有可用的API配置")?;
+
+    let message_count = ai_chat_messages.len();
+
+    // 获取可用工具定义
+    let chat_tools = ToolRegistry::get_available_tools_global();
+
+    // 构建聊天完成请求
+    let request = crate::ai_chat::ChatCompletionRequest {
+        model: api_config.model.clone(),
+        messages: ai_chat_messages,
+        temperature: Some(0.7),
+        max_tokens: Some(2048),
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        stop: None,
+        stream: Some(false),
+        tools: Some(chat_tools), // ✅ 添加工具定义
+        tool_choice: Some(crate::ai_chat::ToolChoice::String("auto".to_string())), // ✅ 让AI自动决定
+    };
+
+    // 调用真实的AI服务
+    let start_time = std::time::Instant::now();
+
+    println!("重新生成：发送AI请求到模型: {}", api_config.model);
+    println!("消息数量: {}", message_count);
+
+    // 调用 AIChatService 进行真实的AI API调用
+    use crate::ai_chat::AIChatService;
+    let ai_response_result =
+        AIChatService::create_chat_completion(&api_config, &request, Some(&app_handle))
+            .await
+            .map_err(|e| format!("AI API调用失败: {}", e))?;
+
+    let _execution_time = start_time.elapsed().as_millis() as u64;
+
+    // 提取AI响应内容
+    let ai_content = ai_response_result
+        .choices
+        .first()
+        .map(|choice| choice.message.content.clone())
+        .unwrap_or_else(|| "AI未返回响应".to_string());
+
+    // 提取工具调用（如果有）
+    let tool_calls_data = ai_response_result
+        .choices
+        .first()
+        .and_then(|choice| choice.message.tool_calls.clone());
+
+    // 转换工具调用格式
+    let converted_tool_calls = tool_calls_data.as_ref().map(|calls| {
+        calls
+            .iter()
+            .map(|call| crate::chat_history::ToolCall {
+                id: call.id.clone(),
+                r#type: call.call_type.clone(),
+                function: crate::chat_history::ToolFunction {
+                    name: call.function.name.clone(),
+                    arguments: call.function.arguments.clone(),
+                },
+            })
+            .collect::<Vec<_>>()
+    });
+
+    // 重新获取会话（因为可能在AI调用期间被修改）
+    let mut session = SESSION_MANAGER.get_or_create_session(&app_handle, uuid.clone())?;
+
+    // 添加AI响应到历史记录
+    let ai_response = session.add_assistant_message(ai_content.clone(), converted_tool_calls);
+
+    // 发送 AI 响应事件
+    EventEmitter::send_message_received(&app_handle, &session.uuid, &ai_response)?;
+
+    // 发送Token统计事件
+    let token_stats = crate::events::TokenUsageStats {
+        prompt_tokens: ai_response_result.usage.prompt_tokens as usize,
+        completion_tokens: ai_response_result.usage.completion_tokens as usize,
+        total_tokens: ai_response_result.usage.total_tokens as usize,
+        context_tokens: context_result.total_tokens,
+        budget_utilization: (ai_response_result.usage.total_tokens as f64 / 102400.0 * 100.0),
+    };
+
+    EventEmitter::send_token_stats(&app_handle, &session.uuid, token_stats)?;
+
+    // 发送整体完成进度
+    EventEmitter::send_progress(
+        &app_handle,
+        &session.uuid,
+        "regenerate",
+        1.0,
+        Some("重新生成完成"),
+    )?;
+
+    // 保存历史记录
+    session.save_history(&app_handle).await?;
+
+    // 更新会话状态
+    SESSION_MANAGER.update_session(session)?;
+
+    Ok(())
 }

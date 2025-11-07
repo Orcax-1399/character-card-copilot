@@ -1,7 +1,9 @@
 use super::AIToolTrait;
-use crate::ai_tools::{ToolCallRequest, ToolParameter, ToolResult};
+use crate::ai_tools::{ToolCallRequest, ToolResult};
+use crate::ai_chat::{ChatTool, ToolFunction, ToolParameters, ToolParameter as ChatToolParameter};
 use crate::character_storage::CharacterStorage;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
 
 /// 角色编辑工具
@@ -19,117 +21,6 @@ impl AIToolTrait for EditCharacterTool {
 
     fn category(&self) -> &'static str {
         "character"
-    }
-
-    fn parameters(&self) -> Vec<ToolParameter> {
-        vec![
-            // 添加一个提示字段，说明至少需要传入一个字段
-            ToolParameter {
-                name: "at_least_one_field".to_string(),
-                description: "必须提供至少一个要编辑的字段（如description, personality等）"
-                    .to_string(),
-                parameter_type: "string".to_string(),
-                required: true,
-                schema: Some(serde_json::json!({
-                    "type": "string",
-                    "enum": ["edit_character"]
-                })),
-            },
-            // 基础字段
-            ToolParameter {
-                name: "name".to_string(),
-                description: "角色名称".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "description".to_string(),
-                description: "角色描述".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "personality".to_string(),
-                description: "性格特点".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "scenario".to_string(),
-                description: "场景设定".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "first_mes".to_string(),
-                description: "开场白".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "mes_example".to_string(),
-                description: "对话示例".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "creator_notes".to_string(),
-                description: "创作者笔记".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "system_prompt".to_string(),
-                description: "系统提示词".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "post_history_instructions".to_string(),
-                description: "历史后指令".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            // 数组字段
-            ToolParameter {
-                name: "alternate_greetings".to_string(),
-                description: "备用问候语，多个问候语用换行分隔".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "tags".to_string(),
-                description: "标签，多个标签用逗号分隔".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            // 元信息字段
-            ToolParameter {
-                name: "creator".to_string(),
-                description: "创作者".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-            ToolParameter {
-                name: "character_version".to_string(),
-                description: "角色版本".to_string(),
-                parameter_type: "string".to_string(),
-                required: false,
-                schema: None,
-            },
-        ]
     }
 
     async fn execute(&self, app_handle: &AppHandle, request: &ToolCallRequest) -> ToolResult {
@@ -274,22 +165,6 @@ impl AIToolTrait for EditCharacterTool {
                     eprintln!("发送角色更新事件失败: {}", e);
                 }
 
-                // 发送工具调用成功事件，用于调试
-                if let Err(e) = app_handle.emit(
-                    "tool-executed",
-                    serde_json::json!({
-                        "tool_name": "edit_character",
-                        "character_uuid": character_uuid,
-                        "updated_fields": updated_fields.iter().map(|(k, v)| serde_json::json!({
-                            "field": k,
-                            "description": v
-                        })).collect::<Vec<_>>(),
-                        "update_count": updated_fields.len()
-                    }),
-                ) {
-                    eprintln!("发送工具执行事件失败: {}", e);
-                }
-
                 ToolResult {
                     success: true,
                     data: Some(serde_json::json!({
@@ -309,6 +184,192 @@ impl AIToolTrait for EditCharacterTool {
                 data: None,
                 error: Some(format!("保存角色数据失败: {}", e)),
                 execution_time_ms: start_time.elapsed().as_millis() as u64,
+            },
+        }
+    }
+
+    fn to_chat_tool(&self) -> ChatTool {
+        let mut properties = HashMap::new();
+
+        // 添加所有参数到 properties
+        properties.insert(
+            "at_least_one_field".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("必须提供至少一个要编辑的字段（如description, personality等）".to_string()),
+                enum_values: Some(vec!["edit_character".to_string()]),
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "name".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("角色名称".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "description".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("角色描述".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "personality".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("性格特点".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "scenario".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("场景设定".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "first_mes".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("开场白".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "mes_example".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("对话示例".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "creator_notes".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("创作者笔记".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "system_prompt".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("系统提示词".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "post_history_instructions".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("历史后指令".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "alternate_greetings".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("备用问候语，多个问候语用换行分隔".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "tags".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("标签，多个标签用逗号分隔".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "creator".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("创作者".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        properties.insert(
+            "character_version".to_string(),
+            ChatToolParameter {
+                param_type: "string".to_string(),
+                description: Some("角色版本".to_string()),
+                enum_values: None,
+                items: None,
+                properties: None,
+                required: None,
+            },
+        );
+
+        ChatTool {
+            tool_type: "function".to_string(),
+            function: ToolFunction {
+                name: self.name().to_string(),
+                description: Some(self.description().to_string()),
+                parameters: Some(ToolParameters {
+                    param_type: "object".to_string(),
+                    properties,
+                    required: Some(vec!["at_least_one_field".to_string()]),
+                }),
             },
         }
     }

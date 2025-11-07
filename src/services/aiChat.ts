@@ -141,49 +141,6 @@ export class AIChatService {
   }
 
   /**
-   * 构建聊天消息数组（已弃用 - 上下文构建现在在后端处理）
-   * @deprecated 使用后端会话管理代替
-   */
-  static async buildMessages(
-    systemPrompt: string,
-    conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>,
-    currentMessage: string,
-    _contextData?: any,
-    _options?: any
-  ): Promise<ChatMessage[]> {
-    console.warn('AIChatService.buildMessages() 已弃用，请使用后端会话管理');
-
-    // 降级实现：仅构建基本的消息结构
-    const messages: ChatMessage[] = [];
-
-    // 系统消息
-    if (systemPrompt) {
-      messages.push({
-        role: 'system',
-        content: systemPrompt,
-      });
-    }
-
-    // 对话历史
-    conversationHistory.forEach(msg => {
-      messages.push({
-        role: msg.role,
-        content: msg.content,
-      });
-    });
-
-    // 当前用户消息
-    if (currentMessage) {
-      messages.push({
-        role: 'user',
-        content: currentMessage,
-      });
-    }
-
-    return messages;
-  }
-
-  /**
    * 验证API配置
    */
   static validateApiConfig(config: ApiConfig): string[] {

@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from "vue";
 import { MdOutlineDelete } from "vue-icons-plus/md";
-import type { Command } from "@/types/command";
+import type { CommandMetadata } from "@/types/commands";
 
 // 组件Props
 const props = defineProps<{
     /** 是否显示命令面板 */
     visible: boolean;
     /** 可用的命令列表 */
-    commands: Command[];
+    commands: CommandMetadata[];
     /** 当前搜索关键字 */
     searchQuery?: string;
 }>();
@@ -16,7 +16,7 @@ const props = defineProps<{
 // 组件Emits
 const emits = defineEmits<{
     /** 选择命令 */
-    select: [command: Command];
+    select: [command: CommandMetadata];
     /** 关闭命令面板 */
     close: [];
     /** 更新选中索引 */
@@ -176,7 +176,7 @@ function scrollToSelected(index: number) {
 /**
  * 点击命令项
  */
-function handleCommandClick(command: Command, index: number) {
+function handleCommandClick(command: CommandMetadata, index: number) {
     selectedIndex.value = index;
     emits("select", command);
 }
@@ -191,7 +191,7 @@ function handleCommandMouseEnter(index: number) {
 /**
  * 获取命令图标组件
  */
-function getCommandIcon(command: Command) {
+function getCommandIcon(command: CommandMetadata) {
     // 目前只支持MdOutlineDelete图标
     // 未来可以扩展支持更多图标
     if (command.icon === "MdOutlineDelete") {

@@ -1,18 +1,52 @@
 import { invoke } from '@tauri-apps/api/core';
 
+/**
+ * OpenAI ChatTool 格式 - 单个参数定义
+ */
 export interface ToolParameter {
-  name: string;
-  description: string;
-  parameter_type: string;
-  required: boolean;
-  schema?: any;
+  type: string; // "string", "number", "boolean", "object", "array"
+  description?: string;
+  enum?: string[]; // 枚举值
+  items?: ToolParameter; // 数组元素类型
+  properties?: Record<string, ToolParameter>; // 对象属性
+  required?: string[]; // 必填字段列表
 }
 
+/**
+ * OpenAI ChatTool 格式 - 参数集合
+ */
+export interface ToolParameters {
+  type: 'object';
+  properties: Record<string, ToolParameter>;
+  required?: string[];
+}
+
+/**
+ * OpenAI ChatTool 格式 - 函数定义
+ */
+export interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: ToolParameters;
+}
+
+/**
+ * OpenAI ChatTool 格式 - 完整工具定义
+ */
+export interface ChatTool {
+  type: 'function';
+  function: ToolFunction;
+}
+
+/**
+ * 旧版 AITool 类型 (已废弃,仅用于兼容性)
+ * @deprecated 使用 ChatTool 代替
+ */
 export interface AITool {
   name: string;
   description: string;
   category: string;
-  parameters: ToolParameter[];
+  parameters: any[];
   enabled: boolean;
 }
 
@@ -32,17 +66,17 @@ export interface ToolResult {
 
 export class AIToolsService {
   /**
-   * 获取所有可用工具
+   * 获取所有可用工具 (OpenAI ChatTool 格式)
    */
-  static async getAvailableTools(): Promise<AITool[]> {
-    return await invoke<AITool[]>('get_available_tools');
+  static async getAvailableTools(): Promise<ChatTool[]> {
+    return await invoke<ChatTool[]>('get_available_tools');
   }
 
   /**
-   * 根据分类获取工具
+   * 根据分类获取工具 (OpenAI ChatTool 格式)
    */
-  static async getToolsByCategory(category: string): Promise<AITool[]> {
-    return await invoke<AITool[]>('get_tools_by_category', { category });
+  static async getToolsByCategory(category: string): Promise<ChatTool[]> {
+    return await invoke<ChatTool[]>('get_tools_by_category', { category });
   }
 
   /**
@@ -93,25 +127,25 @@ export class AIToolsService {
   /**
    * 根据工具名称获取工具
    */
-  static async getToolByName(toolName: string): Promise<AITool | null> {
+  static async getToolByName(toolName: string): Promise<ChatTool | null> {
     const tools = await this.getAvailableTools();
-    return tools.find(tool => tool.name === toolName) || null;
+    return tools.find(tool => tool.function.name === toolName) || null;
   }
 
   /**
-   * 获取启用的工具
+   * 获取所有工具的名称列表
    */
-  static async getEnabledTools(): Promise<AITool[]> {
+  static async getToolNames(): Promise<string[]> {
     const tools = await this.getAvailableTools();
-    return tools.filter(tool => tool.enabled);
+    return tools.map(tool => tool.function.name);
   }
 
   /**
-   * 根据分类获取启用的工具
+   * 检查工具是否存在
    */
-  static async getEnabledToolsByCategory(category: string): Promise<AITool[]> {
-    const tools = await this.getToolsByCategory(category);
-    return tools.filter(tool => tool.enabled);
+  static async hasToolByName(toolName: string): Promise<boolean> {
+    const tool = await this.getToolByName(toolName);
+    return tool !== null;
   }
 }
 

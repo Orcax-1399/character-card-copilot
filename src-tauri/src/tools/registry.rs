@@ -1,5 +1,6 @@
 use super::AIToolTrait;
-use crate::ai_tools::{AITool, ToolCallRequest, ToolResult};
+use crate::ai_tools::{ToolCallRequest, ToolResult};
+use crate::ai_chat::ChatTool;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::AppHandle;
@@ -24,11 +25,11 @@ impl ToolRegistry {
     }
 
     /// 获取所有可用工具
-    pub fn get_available_tools(&self) -> Vec<AITool> {
+    pub fn get_available_tools(&self) -> Vec<ChatTool> {
         self.tools
             .values()
             .filter(|tool| tool.enabled())
-            .map(|tool| tool.to_tool())
+            .map(|tool| tool.to_chat_tool())
             .collect()
     }
 
@@ -74,18 +75,18 @@ impl ToolRegistry {
     }
 
     /// 根据分类获取工具
-    pub fn get_tools_by_category(&self, category: &str) -> Vec<AITool> {
+    pub fn get_tools_by_category(&self, category: &str) -> Vec<ChatTool> {
         self.tools
             .values()
             .filter(|tool| tool.category() == category && tool.enabled())
-            .map(|tool| tool.to_tool())
+            .map(|tool| tool.to_chat_tool())
             .collect()
     }
 
     // ========== 便捷的静态方法 ==========
 
     /// 获取所有可用工具（静态方法）
-    pub fn get_available_tools_global() -> Vec<AITool> {
+    pub fn get_available_tools_global() -> Vec<ChatTool> {
         let registry = TOOL_REGISTRY.read().unwrap();
         registry.get_available_tools()
     }
@@ -97,7 +98,7 @@ impl ToolRegistry {
     }
 
     /// 根据分类获取工具（静态方法）
-    pub fn get_tools_by_category_global(category: &str) -> Vec<AITool> {
+    pub fn get_tools_by_category_global(category: &str) -> Vec<ChatTool> {
         let registry = TOOL_REGISTRY.read().unwrap();
         registry.get_tools_by_category(category)
     }
