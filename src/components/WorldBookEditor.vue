@@ -1,10 +1,7 @@
 <template>
-  <div class="h-full flex gap-2">
-    <!-- 左侧：条目列表区域 -->
-    <div
-      class="flex-1 flex flex-col bg-white rounded-xl shadow-2xl p-3 overflow-hidden"
-      :class="showEditor ? 'w-[45%]' : 'w-full'"
-    >
+  <div class="h-full">
+    <!-- 世界书编辑器 -->
+    <div class="h-full flex flex-col bg-white rounded-xl shadow-2xl p-3 overflow-hidden">
       <!-- 标题 -->
       <div class="mb-4">
         <h2 class="text-xl font-bold text-gray-900">世界书编辑器</h2>
@@ -53,19 +50,15 @@
       </div>
     </div>
 
-    <!-- 右侧：编辑器面板 -->
-    <div
-      v-if="showEditor"
-      class="w-[55%] transition-all"
-    >
-      <WorldBookEntryEditor
-        :entry="worldBookStore.selectedEntry"
-        :is-creating-new="worldBookStore.isCreatingNew"
-        @save="handleSave"
-        @cancel="handleCancel"
-        @delete="handleDeleteFromEditor"
-      />
-    </div>
+    <!-- 编辑模态框 -->
+    <WorldBookEditorModal
+      :visible="showEditor"
+      :entry="worldBookStore.selectedEntry"
+      :is-creating-new="worldBookStore.isCreatingNew"
+      @close="handleCancel"
+      @save="handleSave"
+      @delete="handleDeleteFromEditor"
+    />
   </div>
 </template>
 
@@ -76,7 +69,7 @@ import { useNotification } from '@/composables/useNotification';
 import { useModal } from '@/composables/useModal';
 import WorldBookSearch from './WorldBookSearch.vue';
 import WorldBookEntry from './WorldBookEntry.vue';
-import WorldBookEntryEditor from './WorldBookEntryEditor.vue';
+import WorldBookEditorModal from './WorldBookEditorModal.vue';
 import type { CreateWorldBookEntryParams, UpdateWorldBookEntryParams } from '@/types/character';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
