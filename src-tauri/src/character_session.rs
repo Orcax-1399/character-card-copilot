@@ -93,6 +93,8 @@ pub struct CharacterSession {
     pub last_active: DateTime<Utc>,
     /// 会话状态
     pub status: SessionStatus,
+    /// 已保存到磁盘的消息数量（用于增量保存）
+    pub last_saved_index: usize,
 }
 
 /// 会话状态枚举
@@ -122,6 +124,7 @@ impl CharacterSession {
             created_at: now,
             last_active: now,
             status: SessionStatus::Loading,
+            last_saved_index: 0,
         }
     }
 
@@ -137,7 +140,9 @@ impl CharacterSession {
         let chat_history = history_manager.load_history()?;
 
         let mut session = Self::new(uuid, character_data);
+        let history_len = chat_history.len();
         session.chat_history = chat_history;
+        session.last_saved_index = history_len; // 已加载的历史已经在磁盘上
         session.status = SessionStatus::Active;
         session.last_active = Utc::now();
 
@@ -216,14 +221,32 @@ impl CharacterSession {
         message
     }
 
-    /// 保存聊天历史到文件
-    pub async fn save_history(&self, app_handle: &AppHandle) -> Result<(), String> {
+    /// 保存聊天历史到文件（增量保存）
+    pub async fn save_history(&mut self, app_handle: &AppHandle) -> Result<(), String> {
         let history_manager = ChatHistoryManager::new(app_handle, &self.uuid);
 
-        // 保存所有消息（如果历史很长，可以考虑增量保存）
-        for message in &self.chat_history {
+        // 只保存新增的消息（从 last_saved_index 开始）
+        let unsaved_messages = &self.chat_history[self.last_saved_index..];
+
+        for message in unsaved_messages {
             history_manager.save_message(message)?;
         }
+
+        // 更新已保存的索引
+        self.last_saved_index = self.chat_history.len();
+
+        Ok(())
+    }
+
+    /// 完全重写历史文件（用于删除/编辑场景）
+    async fn rewrite_all_history(&mut self, app_handle: &AppHandle) -> Result<(), String> {
+        let history_manager = ChatHistoryManager::new(app_handle, &self.uuid);
+
+        // 使用 ChatHistoryManager 的 save_history 方法完全重写文件
+        history_manager.save_history(&self.chat_history)?;
+
+        // 更新已保存的索引
+        self.last_saved_index = self.chat_history.len();
 
         Ok(())
     }
@@ -241,6 +264,7 @@ impl CharacterSession {
     /// 清空聊天历史
     pub fn clear_history(&mut self) {
         self.chat_history.clear();
+        self.last_saved_index = 0; // 重置保存索引
         self.last_active = Utc::now();
     }
 
@@ -810,9 +834,12 @@ pub async fn unload_character_session(
     uuid: String,
 ) -> Result<(), String> {
     // 在卸载前保存历史记录
-    if let Some(session) = SESSION_MANAGER.get_session(&uuid) {
+    if let Some(mut session) = SESSION_MANAGER.get_session(&uuid) {
         if let Err(e) = session.save_history(&app_handle).await {
             eprintln!("保存会话历史记录失败: {}", e);
+        } else {
+            // 保存成功后更新会话（更新 last_saved_index）
+            let _ = SESSION_MANAGER.update_session(session);
         }
     }
 
@@ -859,9 +886,13 @@ pub async fn save_all_sessions(app_handle: tauri::AppHandle) -> Result<usize, St
     let mut saved_count = 0;
 
     for session_info in sessions_info {
-        if let Some(session) = SESSION_MANAGER.get_session(&session_info.uuid) {
+        if let Some(mut session) = SESSION_MANAGER.get_session(&session_info.uuid) {
             match session.save_history(&app_handle).await {
-                Ok(()) => saved_count += 1,
+                Ok(()) => {
+                    saved_count += 1;
+                    // 保存成功后更新会话（更新 last_saved_index）
+                    let _ = SESSION_MANAGER.update_session(session);
+                }
                 Err(e) => eprintln!("保存会话 {} 历史记录失败: {}", session_info.uuid, e),
             }
         }
@@ -905,8 +936,8 @@ pub async fn delete_chat_message(app_handle: tauri::AppHandle, index: usize) -> 
     // 删除消息
     let deleted_message = session.delete_message(index)?;
 
-    // 保存历史记录
-    session.save_history(&app_handle).await?;
+    // 删除后需要完全重写历史文件
+    session.rewrite_all_history(&app_handle).await?;
 
     // 更新会话
     SESSION_MANAGER.update_session(session)?;
@@ -931,8 +962,8 @@ pub async fn edit_chat_message(
     // 编辑消息
     let edited_message = session.edit_message(index, new_content)?;
 
-    // 保存历史记录
-    session.save_history(&app_handle).await?;
+    // 编辑后需要完全重写历史文件
+    session.rewrite_all_history(&app_handle).await?;
 
     // 更新会话
     SESSION_MANAGER.update_session(session)?;
@@ -964,8 +995,8 @@ pub async fn regenerate_last_message(app_handle: tauri::AppHandle) -> Result<(),
     // 删除最后一条AI回复
     session.delete_last_message()?;
 
-    // 保存历史记录（删除后的状态）
-    session.save_history(&app_handle).await?;
+    // 删除后需要完全重写历史文件
+    session.rewrite_all_history(&app_handle).await?;
 
     // 获取倒数第二条消息（应该是用户消息）
     let user_message = session

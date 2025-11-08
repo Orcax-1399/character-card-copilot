@@ -310,8 +310,20 @@ async fn clear_chat_history(
     app_handle: tauri::AppHandle,
     character_id: String,
 ) -> Result<(), String> {
+    // 清空磁盘文件
     let manager = ChatHistoryManager::new(&app_handle, &character_id);
-    manager.clear_history()
+    manager.clear_history()?;
+
+    // 如果该角色会话已加载到内存，也清空内存中的历史
+    if let Some(mut session) = character_session::SESSION_MANAGER.get_session(&character_id) {
+        session.clear_history();
+        character_session::SESSION_MANAGER.update_session(session)?;
+        println!("✅ 已清空角色 {} 的聊天历史（内存+磁盘）", character_id);
+    } else {
+        println!("✅ 已清空角色 {} 的聊天历史（仅磁盘）", character_id);
+    }
+
+    Ok(())
 }
 
 #[tauri::command]

@@ -152,7 +152,7 @@ impl ChatHistoryManager {
         Ok(())
     }
 
-    fn save_history(&self, history: &[ChatMessage]) -> Result<(), String> {
+    pub fn save_history(&self, history: &[ChatMessage]) -> Result<(), String> {
         let file_path = self.get_history_file_path()?;
 
         let content = history
