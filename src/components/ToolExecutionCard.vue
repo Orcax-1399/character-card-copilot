@@ -21,7 +21,7 @@
                 @keydown.space.prevent="toggleArgs(index)"
             >
                 <MdBuild
-                    class="w-5 h-5 text-yellow-600 flex-shrink-0"
+                    class="w-5 h-5 text-yellow-600 shrink-0"
                     aria-hidden="true"
                 />
                 <span
@@ -30,7 +30,7 @@
                 >
                 <MdExpandMore
                     :class="[
-                        'w-5 h-5 text-gray-500 flex-shrink-0 transition-transform duration-300',
+                        'w-5 h-5 text-gray-500 shrink-0 transition-transform duration-300',
                         expandedArgs[index] && 'rotate-180',
                     ]"
                     aria-hidden="true"
@@ -45,7 +45,7 @@
                 aria-label="工具调用参数"
             >
                 <pre
-                    class="font-mono text-xs text-gray-700 whitespace-pre-wrap break-words"
+                    class="font-mono text-xs text-gray-700 whitespace-pre-wrap wrap-break-words"
                     v-html="
                         colorizeJSON(formatJSON(toolCall.function.arguments))
                     "
@@ -77,12 +77,12 @@
             >
                 <MdCheckCircle
                     v-if="isResultSuccess(result)"
-                    class="w-5 h-5 text-green-600 flex-shrink-0"
+                    class="w-5 h-5 text-green-600 shrink-0"
                     aria-hidden="true"
                 />
                 <MdError
                     v-else
-                    class="w-5 h-5 text-red-600 flex-shrink-0"
+                    class="w-5 h-5 text-red-600 shrink-0"
                     aria-hidden="true"
                 />
                 <span class="font-medium text-sm text-gray-800 flex-1">
@@ -94,7 +94,7 @@
                 </span>
                 <MdExpandMore
                     :class="[
-                        'w-5 h-5 text-gray-500 flex-shrink-0 transition-transform duration-300',
+                        'w-5 h-5 text-gray-500 shrink-0 transition-transform duration-300',
                         expandedResults[index] && 'rotate-180',
                     ]"
                     aria-hidden="true"
@@ -114,7 +114,7 @@
                 aria-label="工具执行结果"
             >
                 <pre
-                    class="text-sm text-gray-700 whitespace-pre-wrap break-words"
+                    class="text-sm text-gray-700 whitespace-pre-wrap wrap-break-words"
                     v-html="colorizeJSON(formatJSON(result.content))"
                 ></pre>
             </div>

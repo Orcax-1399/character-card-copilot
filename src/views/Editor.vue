@@ -336,15 +336,30 @@ async function loadCharacterData(uuid: string) {
 }
 
 // 更新单个字段（安全保存，保留世界书等数据）
-async function updateField(fieldName: string, fieldValue: string) {
+async function updateField(
+    fieldName: string,
+    oldValue: string | string[],
+    newValue: string | string[],
+) {
     if (!characterUUID.value) return;
 
-    try {
-        await updateCharacterField(characterUUID.value, fieldName, fieldValue);
-        console.log(`字段 ${fieldName} 已保存`);
-    } catch (error) {
-        console.error(`更新字段 ${fieldName} 失败:`, error);
-        showErrorToast(`保存 ${fieldName} 失败`, "保存错误");
+    // 转换字符串数组为字符串进行比较
+    const oldStr = Array.isArray(oldValue) ? oldValue.join("\n") : oldValue || "";
+    const newStr = Array.isArray(newValue)
+        ? newValue.join("\n")
+        : newValue || "";
+
+    // 只有值真正改变时才更新
+    if (oldStr !== newStr) {
+        try {
+            await updateCharacterField(characterUUID.value, fieldName, newStr);
+            console.log(`字段 ${fieldName} 已保存`);
+        } catch (error) {
+            console.error(`更新字段 ${fieldName} 失败:`, error);
+            showErrorToast(`保存 ${fieldName} 失败`, "保存错误");
+        }
+    } else {
+        console.log(`字段 ${fieldName} 值未变化，跳过保存`);
     }
 }
 
@@ -601,7 +616,11 @@ onUnmounted(async () => {
                                 <input
                                     v-model="characterData.name"
                                     @blur="
-                                        updateField('name', characterData.name)
+                                        updateField(
+                                            'name',
+                                            fullCharacterData?.card?.data?.name || '',
+                                            characterData.name,
+                                        )
                                     "
                                     type="text"
                                     class="w-full bg-white border border-gray-200 rounded-lg px-4 py-2 text-lg font-medium"
@@ -694,6 +713,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'description',
+                                        fullCharacterData?.card?.data?.description || '',
                                         characterData.description,
                                     )
                                 "
@@ -719,6 +739,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'personality',
+                                        fullCharacterData?.card?.data?.personality || '',
                                         characterData.personality,
                                     )
                                 "
@@ -744,6 +765,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'scenario',
+                                        fullCharacterData?.card?.data?.scenario || '',
                                         characterData.scenario,
                                     )
                                 "
@@ -769,6 +791,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'first_mes',
+                                        fullCharacterData?.card?.data?.first_mes || '',
                                         characterData.first_mes,
                                     )
                                 "
@@ -794,6 +817,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'mes_example',
+                                        fullCharacterData?.card?.data?.mes_example || '',
                                         characterData.mes_example,
                                     )
                                 "
@@ -819,6 +843,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'creator_notes',
+                                        fullCharacterData?.card?.data?.creator_notes || '',
                                         characterData.creator_notes,
                                     )
                                 "
@@ -844,6 +869,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'system_prompt',
+                                        fullCharacterData?.card?.data?.system_prompt || '',
                                         characterData.system_prompt,
                                     )
                                 "
@@ -875,6 +901,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'post_history_instructions',
+                                        fullCharacterData?.card?.data?.post_history_instructions || '',
                                         characterData.post_history_instructions,
                                     )
                                 "
@@ -901,7 +928,8 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'alternate_greetings',
-                                        characterData.alternate_greetings,
+                                        fullCharacterData?.card?.data?.alternate_greetings || [],
+                                        characterData.alternate_greetings.split('\n'),
                                     )
                                 "
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
@@ -923,7 +951,13 @@ onUnmounted(async () => {
                             </div>
                             <input
                                 v-model="characterData.tags"
-                                @blur="updateField('tags', characterData.tags)"
+                                @blur="
+                                    updateField(
+                                        'tags',
+                                        fullCharacterData?.card?.data?.tags || [],
+                                        characterData.tags.split(',').map(t => t.trim()),
+                                    )
+                                "
                                 type="text"
                                 class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
                                 placeholder="角色标签，用逗号分隔"
@@ -940,6 +974,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'creator',
+                                        fullCharacterData?.card?.data?.creator || '',
                                         characterData.creator,
                                     )
                                 "
@@ -959,6 +994,7 @@ onUnmounted(async () => {
                                 @blur="
                                     updateField(
                                         'character_version',
+                                        fullCharacterData?.card?.data?.character_version || '',
                                         characterData.character_version,
                                     )
                                 "
