@@ -1,0 +1,28 @@
+Character Card Copilot
+Copyright 2025 Character Card Copilot Contributors
+
+This product includes software developed by the Character Card Copilot project.
+
+This software is built with the following open source components:
+
+Frontend:
+- Vue.js (MIT License)
+- Vite (MIT License)
+- Tailwind CSS (MIT License)
+- Pinia (MIT License)
+- Vue Router (MIT License)
+- Markdown-it (MIT License)
+- Highlight.js (BSD-3-Clause License)
+- GPT Tokenizer (MIT License)
+
+Backend (Rust):
+- Tauri (Apache-2.0 OR MIT License)
+- Serde (Apache-2.0 OR MIT License)
+- Tokio (MIT License)
+- Reqwest (Apache-2.0 OR MIT License)
+- async-openai (MIT License)
+- tiktoken-rs (MIT License)
+- Chrono (Apache-2.0 OR MIT License)
+- UUID (Apache-2.0 OR MIT License)
+
+For detailed license information of each dependency, please refer to their respective repositories.

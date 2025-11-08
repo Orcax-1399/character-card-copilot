@@ -1,3 +1,6 @@
+// Copyright 2025 Character Card Copilot Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 import { createApp } from "vue";
 import App from "./App.vue";
 import "./assets/styles.css";

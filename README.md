@@ -10,6 +10,7 @@
 ![Vue 3](https://img.shields.io/badge/Vue.js-4FC08D?logo=vue.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 ![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)
+![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
 
 </div>
 
@@ -83,7 +84,30 @@ pnpm tauri build
 
 ## 📄 开源协议
 
-[待定]
+本项目采用 [Apache License 2.0](LICENSE) 开源协议。
+
+```
+Copyright 2025 Character Card Copilot Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+### 第三方开源组件
+
+本项目使用了以下开源组件，详细信息请参阅 [NOTICE](NOTICE) 文件：
+- Vue.js, Vite, Tailwind CSS (MIT License)
+- Tauri, Serde, Tokio (Apache-2.0 OR MIT License)
+- 其他依赖详见 NOTICE 文件
 
 ---
 

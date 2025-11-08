@@ -1,3 +1,6 @@
+// Copyright 2025 Character Card Copilot Contributors
+// SPDX-License-Identifier: Apache-2.0
+
 mod file_utils;
 mod character_storage;
 mod api_config;
