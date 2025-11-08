@@ -9,7 +9,6 @@ import {
 import { getAllApiConfigs } from "@/services/apiConfig";
 import type { ApiConfig, ChatMessage } from "@/types/api";
 import { AIConfigService, type AIRole } from "@/services/aiConfig";
-import { listen } from "@tauri-apps/api/event";
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import CommandPalette from "./CommandPalette.vue";
 import Modal from "./Modal.vue";
@@ -19,43 +18,8 @@ import type { CommandMetadata } from "@/types/commands";
 import type { ModalOptions } from "@/utils/notification";
 import { useChatStore } from "@/stores/chat";
 import { useAiStore } from "@/stores/ai";
-import type {
-  CharacterLoadedPayload,
-  ChatHistoryLoadedPayload,
-  MessageSentPayload,
-  MessageReceivedPayload,
-  ContextBuiltPayload,
-  CharacterUpdatedPayload,
-  ToolExecutedPayload,
-  SessionUnloadedPayload,
-  ErrorPayload,
-  TokenStatsPayload,
-  ProgressPayload
-} from "@/types/events";
-
-/**
- * 前端消息显示类型
- *
- * 扩展自后端的 ChatMessage 类型，添加前端特有的显示和交互字段
- *
- * 关键差异：
- * - timestamp: 后端使用 number (Unix 毫秒)，前端转换为 Date 对象方便显示
- * - id: 前端生成的唯一标识符，用于 v-for 的 key 绑定
- * - isEditing: 前端编辑状态标记
- *
- * 重要：保持 role 字段的完整性
- * - 必须保留所有可能的 role 值：'user' | 'assistant' | 'tool'
- * - 不能将 'tool' 消息转换为其他 role 类型
- * - 必须保留 tool_calls, tool_call_id, name 等可选字段
- */
-interface DisplayMessage extends Omit<ChatMessage, 'timestamp'> {
-    /** 前端生成的唯一 ID，用于列表渲染 key */
-    id: string;
-    /** 消息时间戳（Date 对象，方便前端格式化显示） */
-    timestamp: Date;
-    /** 消息是否处于编辑状态 */
-    isEditing?: boolean;
-}
+import { useAiEventListeners, type DisplayMessage } from "@/composables/ai/useAiEventListeners";
+import { useMessageGrouping, type GroupedMessage } from "@/composables/ai/useMessageGrouping";
 
 // 组件props
 const props = defineProps<{
@@ -77,6 +41,17 @@ const aiStore = useAiStore();
 
 // 对话相关状态 - 保持为 ref，但同步到 store
 const messages = ref<DisplayMessage[]>([]);
+
+// 后端事件相关状态
+const contextBuiltInfo = ref<any>(null);
+const isLoadingFromBackend = ref(false);
+
+// 使用 AI 事件监听器 composable
+const { setupListeners, cleanup: cleanupEventListeners } = useAiEventListeners(
+    messages,
+    contextBuiltInfo,
+    isLoadingFromBackend
+);
 
 const userInput = ref("");
 const selectedApi = ref("");
@@ -107,95 +82,8 @@ const commandSearchQuery = ref("");
 const modalOptions = ref<ModalOptions | null>(null);
 const pendingCommand = ref<CommandMetadata | null>(null);
 
-// 后端事件相关状态
-const contextBuiltInfo = ref<any>(null);
-const isLoadingFromBackend = ref(false);
-
-// 事件监听器清理函数列表
-const eventUnlisteners = ref<(() => void)[]>([]);
-
-/**
- * 分组消息类型
- *
- * 使用类型判别联合 (Discriminated Union) 区分不同类型的消息组：
- * - normal: 普通的用户或助手消息
- * - tool-execution: 工具调用流程组（包含调用请求和执行结果）
- */
-type GroupedMessage =
-    | { type: 'normal'; message: DisplayMessage }
-    | { type: 'tool-execution'; toolCalls: import('@/types/api').ToolCall[]; toolResults: DisplayMessage[]; timestamp: Date };
-
-/**
- * 消息分组计算属性
- *
- * 将原始消息列表转换为分组显示结构，主要功能：
- * 1. 合并工具调用流程：将 assistant 消息的 tool_calls 和后续的 tool 消息合并为一个卡片
- * 2. 保持普通消息不变：user 和不带 tool_calls 的 assistant 消息独立显示
- *
- * 处理逻辑示例：
- * ```
- * 原始消息序列：
- * [
- *   { role: 'user', content: '搜索XXX' },
- *   { role: 'assistant', content: '', tool_calls: [{id: 'call_1', ...}] },
- *   { role: 'tool', content: '{...}', tool_call_id: 'call_1' },
- *   { role: 'assistant', content: '根据搜索结果...' }
- * ]
- *
- * 分组后：
- * [
- *   { type: 'normal', message: {...} },                    // user 消息
- *   { type: 'tool-execution', toolCalls: [...], toolResults: [...] }, // 工具调用组
- *   { type: 'normal', message: {...} }                     // assistant 回复
- * ]
- * ```
- *
- * @returns 分组后的消息列表，用于渲染不同类型的消息卡片
- */
-const groupedMessages = computed<GroupedMessage[]>(() => {
-    const result: GroupedMessage[] = [];
-    let i = 0;
-
-    while (i < messages.value.length) {
-        const msg = messages.value[i];
-
-        // 检测工具调用起始点：带 tool_calls 的 assistant 消息
-        if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
-            const toolCalls = msg.tool_calls;
-            const toolResults: DisplayMessage[] = [];
-            let j = i + 1;
-
-            // 收集紧随其后的所有 tool 消息（工具执行结果）
-            while (j < messages.value.length && messages.value[j].role === 'tool') {
-                toolResults.push(messages.value[j]);
-                j++;
-            }
-
-            // 添加工具执行组（单个卡片显示）
-            result.push({
-                type: 'tool-execution',
-                toolCalls,
-                toolResults,
-                timestamp: msg.timestamp
-            });
-
-            i = j; // 跳过已处理的 tool 消息
-        } else if (msg.role !== 'tool') {
-            // 普通消息（user 或不带 tool_calls 的 assistant）
-            result.push({
-                type: 'normal',
-                message: msg
-            });
-            i++;
-        } else {
-            // 孤立的 tool 消息（没有对应的 tool_calls）
-            // 理论上不应该发生，跳过以保证健壮性
-            i++;
-        }
-    }
-
-    return result;
-});
+// 使用消息分组 composable
+const groupedMessages = useMessageGrouping(messages);
 
 // 切换显示/隐藏
 function togglePanel() {
@@ -418,235 +306,6 @@ async function initializeChatHistory() {
         console.error("初始化聊天历史记录失败:", error);
         messages.value = [];
     }
-}
-
-// ==================== 后端事件监听 ====================
-
-/**
- * 初始化后端事件监听器
- */
-async function initializeBackendEventListeners() {
-    console.log("初始化后端事件监听器...");
-
-    // 角色加载事件
-    const unlistenCharacterLoaded = await listen<CharacterLoadedPayload>("character-loaded", (event) => {
-        console.log("🎭 角色加载事件:", event.payload);
-        const payload = event.payload;
-        aiStore.updateSessionState(payload.uuid, true);
-        isLoadingFromBackend.value = false;
-
-        // 可以在这里通知父组件角色数据已更新
-        // emit('character-updated', payload.character_data);
-    });
-
-    // 聊天历史加载事件
-    const unlistenChatHistoryLoaded = await listen<ChatHistoryLoadedPayload>("chat-history-loaded", (event) => {
-        console.log("📚 聊天历史加载事件:", event.payload);
-        const payload = event.payload;
-
-        // 转换为前端消息格式（保留所有 role 类型）
-        messages.value = payload.chat_history.map((msg, index) => ({
-            id: `${msg.timestamp || index}_${payload.uuid}`,
-            role: msg.role, // 保留原始 role：user/assistant/tool
-            content: msg.content,
-            timestamp: new Date((msg.timestamp || Date.now() / 1000) * 1000),
-            // 保留工具调用相关字段
-            tool_calls: msg.tool_calls,
-            tool_call_id: msg.tool_call_id,
-            name: msg.name,
-        }));
-
-        // 同步到 store
-        chatStore.setChatHistory(payload.uuid, payload.chat_history);
-        chatStore.setActiveCharacter(payload.uuid);
-
-        console.log(`从后端加载了 ${messages.value.length} 条聊天历史记录`);
-    });
-
-    // 消息发送事件
-    const unlistenMessageSent = await listen<MessageSentPayload>("message-sent", (event) => {
-        console.log("📤 消息发送事件:", event.payload);
-        const payload = event.payload;
-
-        // 如果消息不在前端列表中，添加它
-        const existingMessage = messages.value.find(msg =>
-            msg.content === payload.message.content &&
-            msg.role === "user"
-        );
-
-        if (!existingMessage) {
-            const userMessageObj = {
-                id: `${payload.message.timestamp}_sent_${payload.uuid}`,
-                role: "user" as const,
-                content: payload.message.content,
-                timestamp: new Date(payload.message.timestamp || Date.now()),
-            };
-            messages.value.push(userMessageObj);
-        }
-    });
-
-    // 消息接收事件
-    const unlistenMessageReceived = await listen<MessageReceivedPayload>("message-received", (event) => {
-        console.log("📥 消息接收事件:", event.payload);
-        const payload = event.payload;
-
-        // 如果有中间消息（工具调用流程），先插入它们
-        if (payload.intermediate_messages && payload.intermediate_messages.length > 0) {
-            console.log(`🔄 插入 ${payload.intermediate_messages.length} 条中间消息（tool 调用流程）`);
-
-            const intermediateDisplayMessages = payload.intermediate_messages.map((msg, index) => ({
-                id: `${msg.timestamp || Date.now()}_intermediate_${index}_${payload.uuid}`,
-                role: msg.role,
-                content: msg.content,
-                timestamp: new Date(msg.timestamp || Date.now()),
-                tool_calls: msg.tool_calls,
-                tool_call_id: msg.tool_call_id,
-                name: msg.name,
-            }));
-
-            messages.value.push(...intermediateDisplayMessages);
-        }
-
-        // 添加最终的 AI 回复消息
-        const aiMessageObj: DisplayMessage = {
-            id: `${payload.message.timestamp}_received_${payload.uuid}`,
-            role: "assistant",
-            content: payload.message.content,
-            timestamp: new Date(payload.message.timestamp || Date.now()),
-            // 保留工具调用字段（如果有）
-            tool_calls: payload.message.tool_calls,
-            tool_call_id: payload.message.tool_call_id,
-            name: payload.message.name,
-        };
-        messages.value.push(aiMessageObj);
-
-        // 设置加载完成
-        // 加载状态由aiStore管理
-    });
-
-    // 上下文构建完成事件
-    const unlistenContextBuilt = await listen<ContextBuiltPayload>("context-built", (event) => {
-        console.log("🔧 上下文构建完成事件:", event.payload);
-        const payload = event.payload;
-        contextBuiltInfo.value = payload.context_result;
-    });
-
-    // 角色更新事件
-    const unlistenCharacterUpdated = await listen<CharacterUpdatedPayload>("character-updated", (event) => {
-        console.log("🔄 角色更新事件:", event.payload);
-
-        // 可以在这里通知父组件角色数据已更新
-        // emit('character-updated', event.payload.character_data);
-    });
-
-    /**
-     * 工具执行事件监听器
-     *
-     * 用于调试和日志记录工具执行情况
-     *
-     * 注意：工具消息（role: "tool"）现在通过 message-received 事件的
-     *      intermediate_messages 字段统一接收，无需在此创建消息
-     *
-     * 数据流：
-     * Backend tool execution -> intermediate_messages -> message-received -> UI display
-     */
-    const unlistenToolExecuted = await listen<ToolExecutedPayload>("tool-executed", (event) => {
-        const payload = event.payload;
-
-        if (payload.success) {
-            console.log("✅ 工具执行成功:", {
-                工具名称: payload.tool_name,
-                执行时间: `${payload.execution_time_ms}ms`,
-                结果: payload.result
-            });
-        } else {
-            console.error("❌ 工具执行失败:", {
-                工具名称: payload.tool_name,
-                错误: payload.error,
-                执行时间: `${payload.execution_time_ms}ms`
-            });
-        }
-
-        // 注：tool 消息会通过 message-received 事件的 intermediate_messages 字段接收
-        // 无需在此手动创建，避免消息重复
-    });
-
-    // 会话卸载事件
-    const unlistenSessionUnloaded = await listen<SessionUnloadedPayload>("session-unloaded", (event) => {
-        console.log("🚪 会话卸载事件:", event.payload);
-        const payload = event.payload;
-
-        if (payload.uuid === aiStore.currentSessionUUID) {
-            aiStore.clearSessionState();
-            messages.value = [];
-            contextBuiltInfo.value = null;
-        }
-    });
-
-    // 错误事件
-    const unlistenError = await listen<ErrorPayload>("error", (event) => {
-        console.error("❌ 错误事件:", event.payload);
-        const payload = event.payload;
-
-        const errorMessageObj = {
-            id: `error_${payload.timestamp}_${payload.uuid || 'unknown'}`,
-            role: "assistant" as const,
-            content: `⚠️ 系统错误 [${payload.error_code}]: ${payload.error_message}`,
-            timestamp: new Date(payload.timestamp),
-        };
-
-        messages.value.push(errorMessageObj);
-        aiStore.isLoading = false;
-    });
-
-    // Token统计事件
-    const unlistenTokenStats = await listen<TokenStatsPayload>("token-stats", (event) => {
-        console.log("📊 Token统计事件:", event.payload);
-        aiStore.updateTokenStats(event.payload.token_usage);
-    });
-
-    // 进度事件
-    const unlistenProgress = await listen<ProgressPayload>("progress", (event) => {
-        console.log("📈 进度事件:", event.payload);
-        const payload = event.payload;
-
-        if (payload.operation === "ai_response") {
-            // 加载状态由aiStore管理
-        }
-    });
-
-    // 保存所有清理函数
-    eventUnlisteners.value.push(
-        unlistenCharacterLoaded,
-        unlistenChatHistoryLoaded,
-        unlistenMessageSent,
-        unlistenMessageReceived,
-        unlistenContextBuilt,
-        unlistenCharacterUpdated,
-        unlistenToolExecuted,
-        unlistenSessionUnloaded,
-        unlistenError,
-        unlistenTokenStats,
-        unlistenProgress,
-    );
-
-    console.log("✅ 后端事件监听器初始化完成");
-}
-
-/**
- * 清理所有事件监听器
- */
-function cleanupEventListeners() {
-    console.log("清理事件监听器...");
-    eventUnlisteners.value.forEach(unlisten => {
-        try {
-            unlisten();
-        } catch (error) {
-            console.error("清理事件监听器失败:", error);
-        }
-    });
-    eventUnlisteners.value = [];
-    console.log("✅ 事件监听器清理完成");
 }
 
 /**
@@ -1148,7 +807,7 @@ onMounted(async () => {
     }
 
     // 初始化后端事件监听器（必须先完成，才能接收后续事件）
-    await initializeBackendEventListeners();
+    await setupListeners();
 
     // 事件监听器初始化完成后，检查是否需要重新加载会话
     // 只在 store 中有数据但后端会话已失效时才重新加载
