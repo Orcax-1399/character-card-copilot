@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { storeToRefs } from "pinia";
 import { useAppStore } from "@/stores/app";
+import { useCharacterStore } from "@/stores/character";
 import { useNotification } from "@/composables/useNotification";
-import type { CharacterData } from "@/types/character";
-import { getAllCharacters, createCharacter, importCharacterCardFromBytes } from "@/services/characterStorage";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
 import CharacterCard from "@/components/CharacterCard.vue";
 import NewCharacterCard from "@/components/NewCharacterCard.vue";
 
 const appStore = useAppStore();
+const characterStore = useCharacterStore();
 const router = useRouter();
 const route = useRoute();
-const characters = ref<CharacterData[]>([]);
-const loading = ref(false);
+const { loading, characters } = storeToRefs(characterStore);
 const { showSuccessToast, showErrorToast } = useNotification();
 
 onMounted(async () => {
     appStore.setPageTitle("首页", false);
-    await loadCharacters();
+    await characterStore.loadAllCharacters(true); // 强制加载
 });
 
 // 监听路由变化，当从编辑器返回时重新加载角色数据
@@ -28,7 +28,7 @@ watch(
     (newPath, oldPath) => {
         // 当从编辑器页面返回首页时，重新加载角色数据
         if (newPath === "/" && oldPath?.startsWith("/editor/")) {
-            loadCharacters();
+            characterStore.loadAllCharacters();
         }
     },
 );
@@ -40,7 +40,7 @@ onMounted(() => {
 
 function handleVisibilityChange() {
     if (!document.hidden && route.path === "/") {
-        loadCharacters();
+        characterStore.loadAllCharacters(true); // 强制重新加载
     }
 }
 
@@ -49,38 +49,18 @@ onUnmounted(() => {
     document.removeEventListener("visibilitychange", handleVisibilityChange);
 });
 
-async function loadCharacters() {
-    loading.value = true;
-    try {
-        const loadedCharacters = await getAllCharacters();
-        console.log(
-            "加载的角色数据:",
-            loadedCharacters.map((c) => ({
-                name: c.card.data.name,
-                backgroundPath: c.backgroundPath,
-                backgroundPathLength: c.backgroundPath.length,
-                isBase64: c.backgroundPath.startsWith("data:"),
-            })),
-        );
-        characters.value = loadedCharacters;
-    } catch (error) {
-        console.error("加载角色卡失败:", error);
-    } finally {
-        loading.value = false;
-    }
-}
-
 function handleCharacterClick(uuid: string) {
     router.push(`/editor/${uuid}`);
 }
 
 async function handleNewCharacter() {
     try {
-        const newCharacter = await createCharacter("新角色");
-        characters.value.push(newCharacter);
+        const newCharacter = await characterStore.createCharacter("新角色");
+        showSuccessToast("角色创建成功", "创建完成");
         router.push(`/editor/${newCharacter.uuid}`);
     } catch (error) {
         console.error("创建角色卡失败:", error);
+        showErrorToast("创建角色失败，请重试", "创建失败");
     }
 }
 
@@ -102,20 +82,15 @@ async function handleImportCharacter() {
             return;
         }
 
-        loading.value = true;
-
         // 使用 Tauri fs 插件读取文件内容
         const fileData = await readFile(selected);
         const fileName = selected.split(/[\\/]/).pop() || "character.png";
 
         // 调用导入API
-        const importedCharacter = await importCharacterCardFromBytes(
+        const importedCharacter = await characterStore.importCharacterCardFromBytes(
             fileData,
             fileName,
         );
-
-        // 添加到角色列表
-        characters.value.push(importedCharacter);
 
         showSuccessToast("角色导入成功", "导入完成");
 
@@ -124,8 +99,6 @@ async function handleImportCharacter() {
     } catch (error) {
         console.error("导入角色失败:", error);
         showErrorToast("导入角色失败，请检查文件格式", "导入失败");
-    } finally {
-        loading.value = false;
     }
 }
 </script>

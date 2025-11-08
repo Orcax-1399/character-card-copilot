@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
+import { storeToRefs } from 'pinia';
 import type { ApiConfig, ApiTestResult } from '@/types/api';
-import { getAllApiConfigs, deleteApiConfig, setDefaultApiConfig, toggleApiConfig } from '@/services/apiConfig';
+import { useApiStore } from '@/stores/api';
 import ApiItem from './ApiItem.vue';
 import NewApiDialog from './NewApiDialog.vue';
 
@@ -11,63 +12,53 @@ const emit = defineEmits<{
   copy: [api: ApiConfig];
 }>();
 
-const apis = ref<ApiConfig[]>([]);
-const loading = ref(false);
+const apiStore = useApiStore();
+const { apis, loading } = storeToRefs(apiStore);
 const showNewApiDialog = ref(false);
 
 onMounted(async () => {
-  await loadApis();
+  // 自动加载API配置
+  await apiStore.loadAllApis();
 });
-
-async function loadApis() {
-  loading.value = true;
-  try {
-    apis.value = await getAllApiConfigs();
-  } catch (error) {
-    console.error('加载API配置失败:', error);
-  } finally {
-    loading.value = false;
-  }
-}
 
 function handleSelectApi(api: ApiConfig) {
   emit('select', api);
 }
 
-function handleDeleteApi(profile: string) {
+async function handleDeleteApi(profile: string) {
   // TODO: 确认删除对话框
-  deleteApiConfig(profile).then(() => {
-    apis.value = apis.value.filter(api => api.profile !== profile);
-  });
+  try {
+    await apiStore.deleteApi(profile);
+  } catch (error) {
+    console.error('删除API配置失败:', error);
+  }
 }
 
-function handleSetDefault(profile: string) {
-  setDefaultApiConfig(profile).then(() => {
-    apis.value.forEach(api => {
-      api.default = api.profile === profile;
-    });
-  });
+async function handleSetDefault(profile: string) {
+  try {
+    await apiStore.setDefaultApi(profile);
+  } catch (error) {
+    console.error('设置默认API配置失败:', error);
+  }
 }
 
-function handleToggleEnabled(profile: string, enabled: boolean) {
-  toggleApiConfig(profile, enabled).then(() => {
-    const api = apis.value.find(a => a.profile === profile);
-    if (api) {
-      api.enabled = enabled;
-    }
-  });
+async function handleToggleEnabled(profile: string, enabled: boolean) {
+  try {
+    await apiStore.toggleApi(profile, enabled);
+  } catch (error) {
+    console.error('切换API启用状态失败:', error);
+  }
 }
 
 function handleTestConnection(result: ApiTestResult) {
   emit('testConnection', result);
 }
 
-function handleCopyApi(api: ApiConfig) {
-  emit('copy', api);
+function handleCopyApi(_api: ApiConfig) {
+  emit('copy', _api);
 }
 
-function handleNewApiCreated(api: ApiConfig) {
-  apis.value.push(api);
+function handleNewApiCreated(_api: ApiConfig) {
   showNewApiDialog.value = false;
 }
 </script>

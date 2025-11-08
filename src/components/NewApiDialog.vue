@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useApiStore } from '@/stores/api';
 import type { ApiConfig } from '@/types/api';
-import { createApiConfig } from '@/services/apiConfig';
 
 const emit = defineEmits<{
   created: [api: ApiConfig];
   cancel: [];
 }>();
 
+const apiStore = useApiStore();
 const profileName = ref('');
 const loading = ref(false);
 const error = ref('');
@@ -41,7 +42,7 @@ async function handleCreate() {
   error.value = '';
 
   try {
-    const newApi = await createApiConfig({
+    const newApi = await apiStore.createApi({
       profile: profileName.value.trim(),
       endpoint: '',
       key: '',

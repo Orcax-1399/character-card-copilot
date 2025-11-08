@@ -9,7 +9,6 @@ import { getAllApiConfigs } from "@/services/apiConfig";
 import type { ApiConfig, ChatMessage } from "@/types/api";
 import { AIConfigService, type AIRole } from "@/services/aiConfig";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from '@tauri-apps/api/core';
 import MarkdownRenderer from "./MarkdownRenderer.vue";
 import CommandPalette from "./CommandPalette.vue";
 import Modal from "./Modal.vue";
@@ -18,6 +17,7 @@ import { backendCommandService } from "@/services/backendCommandService";
 import type { CommandMetadata } from "@/types/commands";
 import type { ModalOptions } from "@/utils/notification";
 import { useChatStore } from "@/stores/chat";
+import { useAiStore } from "@/stores/ai";
 import type {
   CharacterLoadedPayload,
   ChatHistoryLoadedPayload,
@@ -72,12 +72,12 @@ const isVisible = ref(props.visible !== false);
 
 // 使用 Pinia Store 管理聊天状态
 const chatStore = useChatStore();
+const aiStore = useAiStore();
 
 // 对话相关状态 - 保持为 ref，但同步到 store
 const messages = ref<DisplayMessage[]>([]);
 
 const userInput = ref("");
-const isLoading = ref(false);
 const selectedApi = ref("");
 const apiConfigs = ref<ApiConfig[]>([]);
 
@@ -107,10 +107,7 @@ const modalOptions = ref<ModalOptions | null>(null);
 const pendingCommand = ref<CommandMetadata | null>(null);
 
 // 后端事件相关状态
-const isBackendSessionActive = ref(false);
-const currentSessionUUID = ref<string>("");
 const contextBuiltInfo = ref<any>(null);
-const lastTokenStats = ref<any>(null);
 const isLoadingFromBackend = ref(false);
 
 // 事件监听器清理函数列表
@@ -392,10 +389,8 @@ async function initializeChatHistory() {
             return;
         }
 
-        // 直接调用后端加载历史记录
-        const history = await invoke<ChatMessage[]>('load_chat_history', {
-            characterId
-        });
+        // 通过aiStore加载历史记录
+        const history = await aiStore.loadChatHistory(characterId);
 
         // 转换为前端消息格式（保留所有 role 类型）
         if (history.length > 0) {
@@ -436,8 +431,7 @@ async function initializeBackendEventListeners() {
     const unlistenCharacterLoaded = await listen<CharacterLoadedPayload>("character-loaded", (event) => {
         console.log("🎭 角色加载事件:", event.payload);
         const payload = event.payload;
-        currentSessionUUID.value = payload.uuid;
-        isBackendSessionActive.value = true;
+        aiStore.updateSessionState(payload.uuid, true);
         isLoadingFromBackend.value = false;
 
         // 可以在这里通知父组件角色数据已更新
@@ -526,7 +520,7 @@ async function initializeBackendEventListeners() {
         messages.value.push(aiMessageObj);
 
         // 设置加载完成
-        isLoading.value = false;
+        // 加载状态由aiStore管理
     });
 
     // 上下文构建完成事件
@@ -581,9 +575,8 @@ async function initializeBackendEventListeners() {
         console.log("🚪 会话卸载事件:", event.payload);
         const payload = event.payload;
 
-        if (payload.uuid === currentSessionUUID.value) {
-            isBackendSessionActive.value = false;
-            currentSessionUUID.value = "";
+        if (payload.uuid === aiStore.currentSessionUUID) {
+            aiStore.clearSessionState();
             messages.value = [];
             contextBuiltInfo.value = null;
         }
@@ -602,13 +595,13 @@ async function initializeBackendEventListeners() {
         };
 
         messages.value.push(errorMessageObj);
-        isLoading.value = false;
+        aiStore.isLoading = false;
     });
 
     // Token统计事件
     const unlistenTokenStats = await listen<TokenStatsPayload>("token-stats", (event) => {
         console.log("📊 Token统计事件:", event.payload);
-        lastTokenStats.value = event.payload.token_usage;
+        aiStore.updateTokenStats(event.payload.token_usage);
     });
 
     // 进度事件
@@ -617,7 +610,7 @@ async function initializeBackendEventListeners() {
         const payload = event.payload;
 
         if (payload.operation === "ai_response") {
-            isLoading.value = payload.progress < 1.0;
+            // 加载状态由aiStore管理
         }
     });
 
@@ -659,7 +652,7 @@ function cleanupEventListeners() {
  * 通过后端发送消息
  */
 async function sendMessageViaBackend() {
-    if (!userInput.value.trim() || isLoading.value) return;
+    if (!userInput.value.trim() || aiStore.isLoading) return;
 
     const message = userInput.value.trim();
     userInput.value = "";
@@ -671,7 +664,7 @@ async function sendMessageViaBackend() {
     inputRows.value = 1;
 
     // 检查是否有活跃的后端会话
-    if (!isBackendSessionActive.value) {
+    if (!aiStore.isBackendSessionActive) {
         const characterId = getCurrentCharacterId();
         if (!characterId) {
             console.error("无法获取角色ID，无法发送消息");
@@ -681,11 +674,11 @@ async function sendMessageViaBackend() {
         console.log("触发后端角色会话加载...");
         isLoadingFromBackend.value = true;
         try {
-            await invoke('load_character_session', { uuid: characterId });
+            await aiStore.loadCharacterSession(characterId);
             // 等待角色加载事件完成后再发送消息
             setTimeout(async () => {
-                if (isBackendSessionActive.value) {
-                    await invoke('send_chat_message', { message });
+                if (aiStore.isBackendSessionActive) {
+                    await aiStore.sendChatMessage(message);
                 } else {
                     console.error("后端会话加载失败");
                     isLoadingFromBackend.value = false;
@@ -697,12 +690,11 @@ async function sendMessageViaBackend() {
         }
     } else {
         // 直接发送消息
-        isLoading.value = true;
         try {
-            await invoke('send_chat_message', { message });
+            await aiStore.sendChatMessage(message);
         } catch (error) {
             console.error("发送消息失败:", error);
-            isLoading.value = false;
+            aiStore.isLoading = false;
         }
     }
 }
@@ -716,12 +708,12 @@ watch(
             console.log(`角色切换: ${oldName} -> ${newName}`);
 
             // 如果使用后端会话，重新加载会话
-            if (isBackendSessionActive.value) {
+            if (aiStore.isBackendSessionActive) {
                 const characterId = getCurrentCharacterId();
                 if (characterId) {
                     isLoadingFromBackend.value = true;
                     try {
-                        await invoke('load_character_session', { uuid: characterId });
+                        await aiStore.loadCharacterSession(characterId);
                     } catch (error) {
                         console.error("重新加载角色会话失败:", error);
                         isLoadingFromBackend.value = false;
@@ -783,10 +775,7 @@ async function saveEdit(index: number) {
 
             if (newContent !== originalContent) {
                 // 调用后端编辑消息
-                await invoke('edit_chat_message', {
-                    index,
-                    newContent
-                });
+                await aiStore.editChatMessage(index, newContent);
 
                 // 更新前端消息
                 messages.value[index].content = newContent;
@@ -823,7 +812,7 @@ async function deleteMessage(index: number) {
     if (index >= 0 && index < messages.value.length) {
         try {
             // 调用后端删除消息
-            await invoke('delete_chat_message', { index });
+            await aiStore.deleteChatMessage(index);
 
             // 前端也删除（后端会通过事件同步，但为了即时响应先删除）
             messages.value.splice(index, 1);
@@ -844,18 +833,18 @@ async function regenerateResponse() {
 
     if (lastMessage.role === "assistant") {
         try {
-            isLoading.value = true;
+            aiStore.isLoading = true;
 
             // 先删除前端的最后一条AI消息（后端也会删除）
             messages.value.pop();
 
             // 调用后端重新生成命令（会自动删除后端历史并重新生成）
-            await invoke('regenerate_last_message');
+            await aiStore.regenerateLastMessage();
 
             console.log("✅ 重新生成完成");
         } catch (error) {
             console.error("重新生成失败:", error);
-            isLoading.value = false;
+            aiStore.isLoading = false;
         }
     } else {
         console.warn("最后一条消息不是AI回复，无法重新生成");
@@ -1067,7 +1056,7 @@ onMounted(async () => {
         const storedHistory = chatStore.getChatHistory(characterId);
         if (chatStore.isBackendSessionActive && storedHistory.length > 0) {
             console.log(`🔄 组件重新挂载，后端会话已存在，跳过重复加载`);
-            isBackendSessionActive.value = true;
+            aiStore.isBackendSessionActive = true;
             // 不重新加载，使用 store 中的数据即可
         }
     }
@@ -1237,7 +1226,7 @@ onUnmounted(() => {
 
                             <!-- 消息操作按钮 -->
                             <div
-                                v-if="!isLoading"
+                                v-if="!aiStore.isLoading"
                                 class="absolute -bottom-6 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1"
                                 :class="
                                     group.message.role === 'user'
@@ -1312,7 +1301,7 @@ onUnmounted(() => {
                     </div>
 
                     <!-- 加载中指示器 -->
-                    <div v-if="isLoading" class="flex justify-start">
+                    <div v-if="aiStore.isLoading" class="flex justify-start">
                         <div
                             class="bg-white border border-gray-200 rounded-lg rounded-bl-sm px-4 py-2"
                         >
@@ -1352,7 +1341,7 @@ onUnmounted(() => {
                         v-model="userInput"
                         @input="handleInput"
                         @keydown="handleKeydown"
-                        :disabled="isLoading"
+                        :disabled="aiStore.isLoading"
                         placeholder="输入消息... (Enter发送，Shift+Enter换行)"
                         class="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
                         style="
@@ -1365,13 +1354,13 @@ onUnmounted(() => {
 
                     <button
                         @click="sendMessage"
-                        :disabled="!userInput.trim() || isLoading"
+                        :disabled="!userInput.trim() || aiStore.isLoading"
                         class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center self-end"
                         title="发送消息"
                         style="height: 40px"
                     >
                         <svg
-                            v-if="!isLoading"
+                            v-if="!aiStore.isLoading"
                             class="w-4 h-4"
                             fill="none"
                             stroke="currentColor"
