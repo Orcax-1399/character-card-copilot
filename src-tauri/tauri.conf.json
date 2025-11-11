@@ -25,7 +25,6 @@
     "active": true,
     "targets": "all",
     "icon": [
-      "icons/copilot-32x32.png",
       "icons/copilot-128x128.png",
       "icons/copilot-150x150.png",
       "icons/copilot-284x284.png",

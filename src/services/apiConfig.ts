@@ -162,8 +162,22 @@ export async function fetchModels(config: ApiConfig): Promise<ModelInfo[]> {
  * @param api 要复制的API配置
  */
 export async function copyApiConfig(api: ApiConfig): Promise<ApiConfig> {
+  // 获取现有的所有配置，以便生成唯一的名称
+  const existingConfigs = await getAllApiConfigs();
+  const existingNames = new Set(existingConfigs.map(config => config.profile));
+
+  // 生成唯一的配置名称
+  let newProfileName = `${api.profile} (copy)`;
+  let counter = 2;
+
+  // 如果名称已存在，添加数字后缀直到找到唯一名称
+  while (existingNames.has(newProfileName)) {
+    newProfileName = `${api.profile} (copy ${counter})`;
+    counter++;
+  }
+
   const copyConfig: CreateApiRequest = {
-    profile: `${api.profile} (copy)`,
+    profile: newProfileName,
     endpoint: api.endpoint,
     key: api.key,
     model: api.model,

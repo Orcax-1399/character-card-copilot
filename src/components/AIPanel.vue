@@ -13,8 +13,13 @@ import type { CommandMetadata } from "@/types/commands";
 import type { ModalOptions } from "@/utils/notification";
 import { useChatStore } from "@/stores/chat";
 import { useAiStore } from "@/stores/ai";
-import { useAiEventListeners, type DisplayMessage } from "@/composables/ai/useAiEventListeners";
+import {
+    useAiEventListeners,
+    type DisplayMessage,
+} from "@/composables/ai/useAiEventListeners";
 import { useMessageGrouping } from "@/composables/ai/useMessageGrouping";
+import { useNotification } from "@/composables/useNotification";
+const { showErrorToast } = useNotification();
 
 // 组件props
 const props = defineProps<{
@@ -45,7 +50,7 @@ const isLoadingFromBackend = ref(false);
 const { setupListeners, cleanup: cleanupEventListeners } = useAiEventListeners(
     messages,
     contextBuiltInfo,
-    isLoadingFromBackend
+    isLoadingFromBackend,
 );
 
 // 输入内容（用于命令面板搜索）
@@ -188,6 +193,7 @@ async function handleSendMessage(message: string) {
         try {
             await aiStore.sendChatMessage(message);
         } catch (error) {
+            showErrorToast(`${error}`, "发送消息失败");
             console.error("发送消息失败:", error);
         }
     }
@@ -265,7 +271,6 @@ async function initializeChatHistory() {
     }
 }
 
-
 // 监听角色数据变化
 watch(
     () => props.characterData?.name,
@@ -310,7 +315,7 @@ watch(
 async function deleteToolExecutionGroup(groupIndex: number) {
     const group = groupedMessages.value[groupIndex];
 
-    if (!group || group.type !== 'tool-execution') {
+    if (!group || group.type !== "tool-execution") {
         console.error(`❌ 组 ${groupIndex} 不是有效的工具调用组`);
         return;
     }
@@ -321,10 +326,11 @@ async function deleteToolExecutionGroup(groupIndex: number) {
 
     // 在原始消息数组中找到对应的 assistant 消息
     const startIndex = messages.value.findIndex(
-        msg => msg.role === 'assistant' &&
-               msg.tool_calls &&
-               msg.tool_calls.length > 0 &&
-               msg.timestamp.getTime() === targetTimestamp.getTime()
+        (msg) =>
+            msg.role === "assistant" &&
+            msg.tool_calls &&
+            msg.tool_calls.length > 0 &&
+            msg.timestamp.getTime() === targetTimestamp.getTime(),
     );
 
     if (startIndex === -1) {
@@ -332,13 +338,15 @@ async function deleteToolExecutionGroup(groupIndex: number) {
         return;
     }
 
-    console.log(`🎯 删除工具调用组 [${groupIndex}]，起始消息索引: ${startIndex}`);
+    console.log(
+        `🎯 删除工具调用组 [${groupIndex}]，起始消息索引: ${startIndex}`,
+    );
     await deleteMessage(startIndex);
 }
 
 // 开始编辑消息（从 MessageBubble 触发）
 function handleStartEdit(messageId: string) {
-    const index = messages.value.findIndex(m => m.id === messageId);
+    const index = messages.value.findIndex((m) => m.id === messageId);
     if (index >= 0 && index < messages.value.length) {
         editingContent.value = messages.value[index].content;
         messages.value[index].isEditing = true;
@@ -347,7 +355,7 @@ function handleStartEdit(messageId: string) {
 
 // 取消编辑（从 MessageBubble 触发）
 function handleCancelEdit(messageId: string) {
-    const index = messages.value.findIndex(m => m.id === messageId);
+    const index = messages.value.findIndex((m) => m.id === messageId);
     if (index >= 0 && index < messages.value.length) {
         messages.value[index].isEditing = false;
     }
@@ -356,7 +364,7 @@ function handleCancelEdit(messageId: string) {
 
 // 保存编辑（从 MessageBubble 触发）
 async function handleSaveEdit(messageId: string, newContent: string) {
-    const index = messages.value.findIndex(m => m.id === messageId);
+    const index = messages.value.findIndex((m) => m.id === messageId);
     if (index >= 0 && index < messages.value.length) {
         try {
             const originalContent = messages.value[index].content;
@@ -390,7 +398,7 @@ async function handleSaveEdit(messageId: string, newContent: string) {
 
 // 删除消息（从 MessageBubble 触发）
 async function handleDeleteMessage(messageId: string) {
-    const index = messages.value.findIndex(m => m.id === messageId);
+    const index = messages.value.findIndex((m) => m.id === messageId);
     await deleteMessage(index);
 }
 
@@ -408,13 +416,19 @@ async function deleteMessage(index: number) {
         let deleteEndIndex = index;
 
         // 情况1: 删除的是普通 assistant（可能是工具调用后的最终回复）
-        if (msg.role === 'assistant' && (!msg.tool_calls || msg.tool_calls.length === 0)) {
+        if (
+            msg.role === "assistant" &&
+            (!msg.tool_calls || msg.tool_calls.length === 0)
+        ) {
             // 向前查找：是否有 tool 消息
             let hasToolMessages = false;
             let toolStartIndex = index - 1;
 
             // 跳过前面的 tool 消息
-            while (toolStartIndex >= 0 && messages.value[toolStartIndex].role === 'tool') {
+            while (
+                toolStartIndex >= 0 &&
+                messages.value[toolStartIndex].role === "tool"
+            ) {
                 hasToolMessages = true;
                 toolStartIndex--;
             }
@@ -422,26 +436,44 @@ async function deleteMessage(index: number) {
             // 如果找到了 tool 消息，再检查前面是否有带 tool_calls 的 assistant
             if (hasToolMessages && toolStartIndex >= 0) {
                 const prevMsg = messages.value[toolStartIndex];
-                if (prevMsg.role === 'assistant' && prevMsg.tool_calls && prevMsg.tool_calls.length > 0) {
+                if (
+                    prevMsg.role === "assistant" &&
+                    prevMsg.tool_calls &&
+                    prevMsg.tool_calls.length > 0
+                ) {
                     // 找到完整的工具调用链，删除整个链条
                     deleteStartIndex = toolStartIndex;
-                    console.log(`🔗 检测到工具调用链: [${deleteStartIndex}] 到 [${deleteEndIndex}]`);
+                    console.log(
+                        `🔗 检测到工具调用链: [${deleteStartIndex}] 到 [${deleteEndIndex}]`,
+                    );
                 }
             }
         }
 
         // 情况2: 删除的是带 tool_calls 的 assistant（工具调用起点）
-        if (msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0) {
+        if (
+            msg.role === "assistant" &&
+            msg.tool_calls &&
+            msg.tool_calls.length > 0
+        ) {
             // 向后查找所有关联的 tool 消息
             let j = index + 1;
-            while (j < messages.value.length && messages.value[j].role === 'tool') {
+            while (
+                j < messages.value.length &&
+                messages.value[j].role === "tool"
+            ) {
                 j++;
             }
 
             // 检查 tool 消息后面是否还有 assistant 回复（工具调用的最终回复）
-            if (j < messages.value.length && messages.value[j].role === 'assistant') {
+            if (
+                j < messages.value.length &&
+                messages.value[j].role === "assistant"
+            ) {
                 deleteEndIndex = j;
-                console.log(`🔗 检测到工具调用链: [${deleteStartIndex}] 到 [${deleteEndIndex}]`);
+                console.log(
+                    `🔗 检测到工具调用链: [${deleteStartIndex}] 到 [${deleteEndIndex}]`,
+                );
             } else {
                 deleteEndIndex = j - 1;
             }
@@ -450,7 +482,9 @@ async function deleteMessage(index: number) {
         // 计算要删除的消息数量
         const deleteCount = deleteEndIndex - deleteStartIndex + 1;
 
-        console.log(`🗑️ 删除消息: 从 [${deleteStartIndex}] 到 [${deleteEndIndex}]，共 ${deleteCount} 条`);
+        console.log(
+            `🗑️ 删除消息: 从 [${deleteStartIndex}] 到 [${deleteEndIndex}]，共 ${deleteCount} 条`,
+        );
 
         // 依次调用后端删除（从后往前删，避免索引变化）
         for (let i = deleteEndIndex; i >= deleteStartIndex; i--) {
@@ -525,7 +559,7 @@ async function updateAvailableCommands() {
         availableCommands.value = await backendCommandService.getCommands();
         await updateFilteredCommands();
     } catch (error) {
-        console.error('更新命令列表失败:', error);
+        console.error("更新命令列表失败:", error);
     }
 }
 
@@ -535,10 +569,10 @@ async function updateAvailableCommands() {
 async function updateFilteredCommands() {
     try {
         filteredCommands.value = await backendCommandService.searchCommands(
-            commandSearchQuery.value
+            commandSearchQuery.value,
         );
     } catch (error) {
-        console.error('搜索命令失败:', error);
+        console.error("搜索命令失败:", error);
     }
 }
 
@@ -581,7 +615,9 @@ async function handleCommandSelect(command: CommandMetadata) {
         pendingCommand.value = command;
         modalOptions.value = {
             title: "确认操作",
-            message: command.confirmation_message || `确定要执行 ${command.name} 吗？`,
+            message:
+                command.confirmation_message ||
+                `确定要执行 ${command.name} 吗？`,
             type: "danger",
             confirmText: "确认",
             cancelText: "取消",
@@ -607,7 +643,7 @@ async function executeCommand(command: CommandMetadata) {
         // 调用后端执行命令
         const result = await backendCommandService.executeCommand(
             command.id,
-            userInput.value
+            userInput.value,
         );
 
         // 关闭命令面板
@@ -690,7 +726,9 @@ onMounted(async () => {
                 id: `${msg.timestamp || index}_${characterId}`,
                 role: msg.role, // 保留原始 role：user/assistant/tool
                 content: msg.content,
-                timestamp: new Date((msg.timestamp || Date.now() / 1000) * 1000),
+                timestamp: new Date(
+                    (msg.timestamp || Date.now() / 1000) * 1000,
+                ),
                 // 保留工具调用相关字段
                 tool_calls: msg.tool_calls,
                 tool_call_id: msg.tool_call_id,
@@ -722,7 +760,7 @@ onUnmounted(() => {
     // 保存当前聊天历史到 store
     const characterId = getCurrentCharacterId();
     if (characterId && messages.value.length > 0) {
-        const chatMessages: ChatMessage[] = messages.value.map(msg => ({
+        const chatMessages: ChatMessage[] = messages.value.map((msg) => ({
             role: msg.role,
             content: msg.content,
             timestamp: Math.floor(msg.timestamp.getTime() / 1000),
@@ -831,10 +869,15 @@ onUnmounted(() => {
                 <div v-else class="space-y-4">
                     <div
                         v-for="(group, groupIndex) in groupedMessages"
-                        :key="group.type === 'normal' ? group.message.id : `tool-${groupIndex}`"
+                        :key="
+                            group.type === 'normal'
+                                ? group.message.id
+                                : `tool-${groupIndex}`
+                        "
                         class="flex"
                         :class="
-                            group.type === 'normal' && group.message.role === 'user'
+                            group.type === 'normal' &&
+                            group.message.role === 'user'
                                 ? 'justify-end'
                                 : 'justify-start'
                         "
@@ -857,11 +900,15 @@ onUnmounted(() => {
                             :timestamp="group.message.timestamp"
                             :is-editing="group.message.isEditing"
                             :loading="aiStore.isLoading"
-                            :is-last-message="groupIndex === groupedMessages.length - 1"
+                            :is-last-message="
+                                groupIndex === groupedMessages.length - 1
+                            "
                             @continue="continueFromUserMessage"
                             @regenerate="regenerateResponse"
                             @start-edit="handleStartEdit(group.message.id)"
-                            @save-edit="handleSaveEdit(group.message.id, $event)"
+                            @save-edit="
+                                handleSaveEdit(group.message.id, $event)
+                            "
                             @cancel-edit="handleCancelEdit(group.message.id)"
                             @delete="handleDeleteMessage(group.message.id)"
                         />

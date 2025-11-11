@@ -1,8 +1,8 @@
 use crate::ai_chat::{ChatCompletionRequest, ChatMessage as AIChatMessage};
 use crate::character_storage::CharacterData;
-use crate::tools::ToolRegistry;
 use crate::chat_history::{ChatHistoryManager, ChatMessage};
 use crate::events::{CharacterUpdateType, EventEmitter, SessionUnloadReason};
+use crate::tools::ToolRegistry;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -648,13 +648,47 @@ async fn generate_ai_response(
     let api_config =
         ApiConfigService::get_default_api_config(&app_handle)?.ok_or("没有可用的API配置")?;
 
-    // 记录消息数量
-    let message_count = ai_chat_messages.len();
-
     // 获取可用工具定义
     let chat_tools = ToolRegistry::get_available_tools_global();
 
-    // 构建聊天完成请求
+    // 🔧 临时禁用工具进行调试
+    // 某些模型（如 GLM-4.6）或某些 API 端点可能不支持 function calling
+    // 设置为 true 可以暂时禁用工具，测试基础对话是否正常
+    let disable_tools_for_debug = false;
+
+    // ===== 调试信息打印（在移动 ai_chat_messages 之前） =====
+    println!("=== AI 请求调试信息 ===");
+    println!("模型: {}", api_config.model);
+    println!("API端点: {}", api_config.endpoint);
+    println!("消息数量: {}", ai_chat_messages.len());
+    println!("工具数量: {}", chat_tools.len());
+    if disable_tools_for_debug {
+        println!("⚠️ 工具已临时禁用（调试模式）");
+    }
+
+    // 打印消息详情
+    for (idx, msg) in ai_chat_messages.iter().enumerate() {
+        let role_str = match msg.role {
+            crate::ai_chat::MessageRole::System => "system",
+            crate::ai_chat::MessageRole::User => "user",
+            crate::ai_chat::MessageRole::Assistant => "assistant",
+            crate::ai_chat::MessageRole::Tool => "tool",
+        };
+        println!(
+            "消息[{}] role={}, content_len={}, has_tool_calls={}, tool_call_id={:?}",
+            idx,
+            role_str,
+            msg.content.len(),
+            msg.tool_calls.is_some(),
+            msg.tool_call_id
+        );
+        if msg.content.is_empty() && msg.tool_calls.is_none() {
+            println!("⚠️ 警告: 消息[{}]内容为空且没有tool_calls", idx);
+        }
+    }
+    println!("=====================");
+
+    // 构建聊天完成请求（移动 ai_chat_messages）
     let request = ChatCompletionRequest {
         model: api_config.model.clone(),
         messages: ai_chat_messages,
@@ -665,15 +699,20 @@ async fn generate_ai_response(
         presence_penalty: None,
         stop: None,
         stream: Some(false),
-        tools: Some(chat_tools), // ✅ 添加工具定义
-        tool_choice: Some(crate::ai_chat::ToolChoice::String("auto".to_string())), // ✅ 让AI自动决定
+        tools: if disable_tools_for_debug {
+            None
+        } else {
+            Some(chat_tools)
+        },
+        tool_choice: if disable_tools_for_debug {
+            None
+        } else {
+            Some(crate::ai_chat::ToolChoice::String("auto".to_string()))
+        },
     };
 
     // 调用真实的AI服务
     let start_time = std::time::Instant::now();
-
-    println!("发送AI请求到模型: {}", api_config.model);
-    println!("消息数量: {}", message_count);
 
     // 调用 AIChatService 进行真实的AI API调用
     use crate::ai_chat::AIChatService;
@@ -683,7 +722,10 @@ async fn generate_ai_response(
         Some(&app_handle), // 传入 app_handle 以支持工具调用
     )
     .await
-    .map_err(|e| format!("AI API调用失败: {}", e))?;
+    .map_err(|e| {
+        eprintln!("❌ API调用失败详情: {}", e);
+        format!("AI API调用失败: {}", e)
+    })?;
 
     let _execution_time = start_time.elapsed().as_millis() as u64;
 
@@ -757,35 +799,47 @@ async fn generate_ai_response(
     let ai_response = session.add_assistant_message(ai_content.clone(), None);
 
     // 转换中间消息为 ChatMessage 格式
-    let converted_intermediate_msgs = ai_response_result.intermediate_messages.as_ref().map(|msgs| {
-        msgs.iter().map(|msg| {
-            crate::chat_history::ChatMessage {
-                role: match msg.role {
-                    crate::ai_chat::MessageRole::User => "user".to_string(),
-                    crate::ai_chat::MessageRole::Assistant => "assistant".to_string(),
-                    crate::ai_chat::MessageRole::System => "system".to_string(),
-                    crate::ai_chat::MessageRole::Tool => "tool".to_string(),
-                },
-                content: msg.content.clone(),
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                tool_calls: msg.tool_calls.as_ref().map(|calls| {
-                    calls.iter().map(|call| crate::chat_history::ToolCall {
-                        id: call.id.clone(),
-                        r#type: call.call_type.clone(),
-                        function: crate::chat_history::ToolFunction {
-                            name: call.function.name.clone(),
-                            arguments: call.function.arguments.clone(),
+    let converted_intermediate_msgs =
+        ai_response_result
+            .intermediate_messages
+            .as_ref()
+            .map(|msgs| {
+                msgs.iter()
+                    .map(|msg| crate::chat_history::ChatMessage {
+                        role: match msg.role {
+                            crate::ai_chat::MessageRole::User => "user".to_string(),
+                            crate::ai_chat::MessageRole::Assistant => "assistant".to_string(),
+                            crate::ai_chat::MessageRole::System => "system".to_string(),
+                            crate::ai_chat::MessageRole::Tool => "tool".to_string(),
                         },
-                    }).collect()
-                }),
-                tool_call_id: msg.tool_call_id.clone(),
-                name: msg.name.clone(),
-            }
-        }).collect()
-    });
+                        content: msg.content.clone(),
+                        timestamp: Some(chrono::Utc::now().timestamp_millis()),
+                        tool_calls: msg.tool_calls.as_ref().map(|calls| {
+                            calls
+                                .iter()
+                                .map(|call| crate::chat_history::ToolCall {
+                                    id: call.id.clone(),
+                                    r#type: call.call_type.clone(),
+                                    function: crate::chat_history::ToolFunction {
+                                        name: call.function.name.clone(),
+                                        arguments: call.function.arguments.clone(),
+                                    },
+                                })
+                                .collect()
+                        }),
+                        tool_call_id: msg.tool_call_id.clone(),
+                        name: msg.name.clone(),
+                    })
+                    .collect()
+            });
 
     // 发送 AI 响应事件（包含中间消息）
-    EventEmitter::send_message_received(&app_handle, &session.uuid, &ai_response, converted_intermediate_msgs)?;
+    EventEmitter::send_message_received(
+        &app_handle,
+        &session.uuid,
+        &ai_response,
+        converted_intermediate_msgs,
+    )?;
 
     // 注：工具执行事件已在 ai_chat.rs 中的工具执行时发送，无需在此重复发送
 

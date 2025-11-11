@@ -17,6 +17,7 @@ const models = ref<ModelInfo[]>([]);
 const loading = ref(false);
 const error = ref('');
 const isOpen = ref(false);
+const searchQuery = ref('');
 
 const selectedModel = computed({
   get: () => props.modelValue || '',
@@ -24,11 +25,23 @@ const selectedModel = computed({
 });
 
 const displayModels = computed(() => {
+  let modelList = models.value;
+
+  // 如果当前选中的模型不在列表中，添加到列表开头
   if (props.modelValue && !models.value.some(m => m.id === props.modelValue)) {
-    // 如果当前选中的模型不在列表中，添加到列表开头
-    return [{ id: props.modelValue, object: 'model' }, ...models.value];
+    modelList = [{ id: props.modelValue, object: 'model' }, ...models.value];
   }
-  return models.value;
+
+  // 根据搜索关键词筛选模型
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase();
+    return modelList.filter(m =>
+      m.id.toLowerCase().includes(query) ||
+      (m.owned_by && m.owned_by.toLowerCase().includes(query))
+    );
+  }
+
+  return modelList;
 });
 
 async function loadModels() {
@@ -57,8 +70,23 @@ function toggleDropdown() {
   }
 }
 
+function handleInput(event: Event) {
+  const target = event.target as HTMLInputElement;
+  searchQuery.value = target.value;
+  selectedModel.value = target.value;
+
+  // 输入时自动打开下拉框
+  if (!isOpen.value) {
+    isOpen.value = true;
+    if (models.value.length === 0) {
+      loadModels();
+    }
+  }
+}
+
 function selectModel(modelId: string) {
   selectedModel.value = modelId;
+  searchQuery.value = ''; // 清除搜索关键词
   isOpen.value = false;
 }
 
@@ -96,6 +124,7 @@ if (typeof document !== 'undefined') {
           type="text"
           class="model-input"
           placeholder="请选择或输入模型名称"
+          @input="handleInput"
           @focus="toggleDropdown"
         />
         <button
@@ -117,9 +146,14 @@ if (typeof document !== 'undefined') {
           {{ error }}
         </div>
         <div v-else-if="displayModels.length === 0" class="dropdown-empty">
-          暂无可用模型
+          <span v-if="searchQuery.trim()">未找到匹配的模型</span>
+          <span v-else>暂无可用模型</span>
         </div>
         <div v-else class="dropdown-list">
+          <!-- 显示筛选结果数量 -->
+          <div v-if="searchQuery.trim()" class="filter-info">
+            找到 {{ displayModels.length }} 个匹配的模型
+          </div>
           <div
             v-for="model in displayModels"
             :key="model.id"
@@ -218,6 +252,15 @@ if (typeof document !== 'undefined') {
 
 .dropdown-error {
   color: #ef4444;
+}
+
+.filter-info {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  background-color: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: center;
 }
 
 .dropdown-list {

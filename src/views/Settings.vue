@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useAppStore } from "@/stores/app";
+import { useApiStore } from "@/stores/api";
 import { useNotification } from "@/composables/useNotification";
 import type { ApiConfig, ApiTestResult } from "@/types/api";
 import ApiList from "@/components/ApiList.vue";
@@ -14,6 +15,7 @@ import {
 } from "@/services/apiConfig";
 
 const appStore = useAppStore();
+const apiStore = useApiStore();
 const { showSuccessToast, showErrorToast, showWarningToast } =
     useNotification();
 const selectedApi = ref<ApiConfig | null>(null);
@@ -35,10 +37,12 @@ const originalProfile = ref<string>("");
 // 更新API列表
 async function updateApiList() {
     try {
-        const configs = await getAllApiConfigs();
+        // 🔧 刷新 store 中的数据（这样 ApiList 组件会自动更新）
+        await apiStore.refreshApis();
 
+        // 如果当前有选中的API，更新其引用
         if (selectedApi.value) {
-            const updated = configs.find(
+            const updated = apiStore.apis.find(
                 (api) => api.profile === selectedApi.value?.profile,
             );
             if (updated) {
@@ -50,10 +54,10 @@ async function updateApiList() {
             }
         }
 
-        // ����ǿ��ˢ��ApiList�����key
+        // 强制刷新 ApiList 组件的 key
         apiListKey.value++;
     } catch (error) {
-        console.error("����API�б�ʧ��:", error);
+        console.error("更新API列表失败:", error);
     }
 }
 
@@ -154,13 +158,20 @@ async function handleSetDefault() {
 async function handleCopyConfig(api: ApiConfig) {
     try {
         const newApi = await copyApiConfig(api);
-        // 重新加载API列表 - 通过改变key强制刷新ApiList组件
-        apiListKey.value++;
         console.log("复制配置成功:", newApi);
-        showSuccessToast("复制配置成功！", "操作完成");
+
+        // 重新加载API列表并刷新UI
+        await updateApiList();
+
+        // 自动选中新复制的配置
+        selectedApi.value = newApi;
+        editingApi.value = { ...newApi };
+        originalProfile.value = newApi.profile;
+
+        showSuccessToast(`已复制为 "${newApi.profile}"`, "操作完成");
     } catch (error) {
         console.error("复制配置失败:", error);
-        showErrorToast("复制配置失败，请重试", "操作失败");
+        showErrorToast(`${error}`, "复制配置失败");
     }
 }
 
