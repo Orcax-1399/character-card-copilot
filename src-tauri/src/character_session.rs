@@ -1,7 +1,7 @@
 use crate::ai_chat::{ChatCompletionRequest, ChatMessage as AIChatMessage};
 use crate::character_storage::CharacterData;
 use crate::chat_history::{ChatHistoryManager, ChatMessage};
-use crate::events::{CharacterUpdateType, EventEmitter, SessionUnloadReason};
+use crate::events::{EventEmitter, SessionUnloadReason};
 use crate::tools::ToolRegistry;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -81,14 +81,8 @@ pub struct CharacterSession {
     pub character_data: CharacterData,
     /// 聊天历史记录
     pub chat_history: Vec<ChatMessage>,
-    /// 上下文构建配置
-    pub context_config: ContextBuilderOptions,
-    /// Token 预算配置
-    pub token_budget: TokenBudget,
     /// 上次上下文 Token 数量
     pub last_context_tokens: usize,
-    /// 会话创建时间
-    pub created_at: DateTime<Utc>,
     /// 最后活跃时间
     pub last_active: DateTime<Utc>,
     /// 会话状态
@@ -118,10 +112,7 @@ impl CharacterSession {
             uuid,
             character_data,
             chat_history: Vec::new(),
-            context_config: ContextBuilderOptions::default(),
-            token_budget: TokenBudget::default(),
             last_context_tokens: 0,
-            created_at: now,
             last_active: now,
             status: SessionStatus::Loading,
             last_saved_index: 0,
@@ -251,16 +242,6 @@ impl CharacterSession {
         Ok(())
     }
 
-    /// 获取最近的聊天消息
-    pub fn get_recent_messages(&self, count: usize) -> Vec<ChatMessage> {
-        let start = if self.chat_history.len() > count {
-            self.chat_history.len() - count
-        } else {
-            0
-        };
-        self.chat_history[start..].to_vec()
-    }
-
     /// 清空聊天历史
     pub fn clear_history(&mut self) {
         self.chat_history.clear();
@@ -311,62 +292,6 @@ impl CharacterSession {
         let removed = self.chat_history.pop().unwrap();
         self.last_active = Utc::now();
         Ok(removed)
-    }
-
-    /// 更新角色数据并发送事件
-    pub fn update_character_data(
-        &mut self,
-        app: &AppHandle,
-        character_data: CharacterData,
-        update_type: CharacterUpdateType,
-    ) -> Result<(), String> {
-        self.character_data = character_data.clone();
-        self.last_active = Utc::now();
-
-        // 发送角色更新事件
-        EventEmitter::send_character_updated(app, &self.uuid, &character_data, update_type)?;
-
-        Ok(())
-    }
-
-    /// 更新角色数据（内部使用，不发送事件）
-    pub fn update_character_data_internal(&mut self, character_data: CharacterData) {
-        self.character_data = character_data;
-        self.last_active = Utc::now();
-    }
-
-    /// 更新上下文配置
-    pub fn update_context_config(&mut self, config: ContextBuilderOptions) {
-        self.context_config = config;
-        self.last_active = Utc::now();
-    }
-
-    /// 处理占位符替换
-    pub fn process_placeholders(&self, template: &str) -> String {
-        let mut result = template.to_string();
-
-        // 替换基本占位符
-        result = result.replace(
-            "{{ROLE}}",
-            &self
-                .context_config
-                .placeholders
-                .get("{{ROLE}}")
-                .unwrap_or(&"角色卡编写助手".to_string()),
-        );
-        result = result.replace(
-            "{{TASK}}",
-            &self
-                .context_config
-                .placeholders
-                .get("{{TASK}}")
-                .unwrap_or(&"帮助用户创作和完善角色设定".to_string()),
-        );
-
-        // 替换角色相关占位符
-        result = result.replace("{{CHARACTER_NAME}}", &self.character_data.card.data.name);
-
-        result
     }
 
     /// 获取会话信息摘要
@@ -490,12 +415,6 @@ impl SessionManager {
         Ok(())
     }
 
-    /// 检查会话是否存在
-    pub fn has_session(&self, uuid: &str) -> bool {
-        let sessions = self.sessions.lock().ok();
-        sessions.map(|s| s.contains_key(uuid)).unwrap_or(false)
-    }
-
     /// 获取会话（如果存在）
     pub fn get_session(&self, uuid: &str) -> Option<CharacterSession> {
         let sessions = self.sessions.lock().ok()?;
@@ -503,7 +422,7 @@ impl SessionManager {
     }
 }
 
-/// 全局会话管理器实例
+// 全局会话管理器实例
 lazy_static::lazy_static! {
     pub static ref SESSION_MANAGER: SessionManager = SessionManager::new(10); // 最多支持10个并发会话
 }
@@ -512,7 +431,7 @@ impl SessionManager {
     /// 获取会话映射的内部引用（用于清理过期会话）
     pub fn get_sessions_map(
         &self,
-    ) -> Result<std::sync::MutexGuard<HashMap<String, CharacterSession>>, String> {
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, CharacterSession>>, String> {
         self.sessions
             .lock()
             .map_err(|e| format!("锁定会话失败: {}", e))
@@ -564,7 +483,7 @@ async fn generate_ai_response(
         .map_err(|e| format!("构建上下文失败: {}", e))?;
 
     // 发送上下文构建完成事件
-    EventEmitter::send_context_built(&app_handle, &session.uuid, &context_result)?;
+    EventEmitter::send_context_built(app_handle, &session.uuid, &context_result)?;
 
     // ==================== 按照标准顺序构建消息 ====================
     // 1️⃣ System / Role Prompt （定义模型身份、语气、核心目标）
@@ -646,7 +565,7 @@ async fn generate_ai_response(
     // 获取默认API配置
     use crate::api_config::ApiConfigService;
     let api_config =
-        ApiConfigService::get_default_api_config(&app_handle)?.ok_or("没有可用的API配置")?;
+        ApiConfigService::get_default_api_config(app_handle)?.ok_or("没有可用的API配置")?;
 
     // 获取可用工具定义
     let chat_tools = ToolRegistry::get_available_tools_global();
@@ -719,7 +638,7 @@ async fn generate_ai_response(
     let ai_response_result = AIChatService::create_chat_completion(
         &api_config,
         &request,
-        Some(&app_handle), // 传入 app_handle 以支持工具调用
+        Some(app_handle), // 传入 app_handle 以支持工具调用
     )
     .await
     .map_err(|e| {
@@ -795,8 +714,8 @@ async fn generate_ai_response(
         }
     }
 
-    // 添加最终AI响应到历史记录（不包含 tool_calls，因为这是工具调用后的最终响应）
-    let ai_response = session.add_assistant_message(ai_content.clone(), None);
+    // 添加最终AI响应到历史记录，并附带本次响应的工具调用
+    let ai_response = session.add_assistant_message(ai_content.clone(), converted_tool_calls);
 
     // 转换中间消息为 ChatMessage 格式
     let converted_intermediate_msgs =
@@ -835,7 +754,7 @@ async fn generate_ai_response(
 
     // 发送 AI 响应事件（包含中间消息）
     EventEmitter::send_message_received(
-        &app_handle,
+        app_handle,
         &session.uuid,
         &ai_response,
         converted_intermediate_msgs,
@@ -852,7 +771,7 @@ async fn generate_ai_response(
         budget_utilization: (ai_response_result.usage.total_tokens as f64 / 102400.0 * 100.0), // 128k context * 0.8
     };
 
-    EventEmitter::send_token_stats(&app_handle, &session.uuid, token_stats)?;
+    EventEmitter::send_token_stats(app_handle, &session.uuid, token_stats)?;
 
     // 发送整体完成进度
     EventEmitter::send_progress(

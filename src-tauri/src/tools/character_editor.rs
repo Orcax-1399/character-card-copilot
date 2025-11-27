@@ -4,7 +4,7 @@ use crate::ai_chat::{ChatTool, ToolFunction, ToolParameters, ToolParameter as Ch
 use crate::character_storage::CharacterStorage;
 use async_trait::async_trait;
 use std::collections::HashMap;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 const ALTERNATE_GREETING_MARKER: &str = "<START_ALT>";
 
@@ -164,7 +164,7 @@ impl AIToolTrait for EditCharacterTool {
                             return ToolResult {
                                 success: false,
                                 data: None,
-                                error: Some(format!("重新加载角色数据失败：角色不存在")),
+                                error: Some("重新加载角色数据失败：角色不存在".to_string()),
                                 execution_time_ms: start_time.elapsed().as_millis() as u64,
                             };
                         }

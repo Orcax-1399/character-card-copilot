@@ -122,36 +122,6 @@ impl ChatHistoryManager {
         Ok(())
     }
 
-    pub fn delete_message(&self, index: usize) -> Result<(), String> {
-        let mut history = self.load_history()?;
-
-        if index < history.len() {
-            history.remove(index);
-            self.save_history(&history)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn update_message(&self, index: usize, new_message: &ChatMessage) -> Result<(), String> {
-        let mut history = self.load_history()?;
-
-        if index < history.len() {
-            let mut updated_message = new_message.clone();
-            updated_message.timestamp = Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs() as i64
-            );
-
-            history[index] = updated_message;
-            self.save_history(&history)?;
-        }
-
-        Ok(())
-    }
-
     pub fn save_history(&self, history: &[ChatMessage]) -> Result<(), String> {
         let file_path = self.get_history_file_path()?;
 

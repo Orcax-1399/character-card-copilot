@@ -1,4 +1,4 @@
-use crate::character_session::{SessionInfo, TokenBudget};
+use crate::character_session::SessionInfo;
 use crate::character_storage::CharacterData;
 use crate::chat_history::ChatMessage;
 use crate::context_builder::BuiltContextResult;
@@ -107,16 +107,6 @@ pub enum SessionUnloadReason {
     AppShutdown,
     /// 错误导致卸载
     Error(String),
-}
-
-/// 错误事件载荷
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ErrorPayload {
-    pub uuid: Option<String>,
-    pub error_code: String,
-    pub error_message: String,
-    pub error_context: Option<serde_json::Value>,
-    pub timestamp: i64,
 }
 
 /// Token统计事件载荷
@@ -300,28 +290,6 @@ impl EventEmitter {
         Ok(())
     }
 
-    /// 发送错误事件
-    pub fn send_error(
-        app: &AppHandle,
-        uuid: Option<&str>,
-        error_code: &str,
-        error_message: &str,
-        error_context: Option<serde_json::Value>,
-    ) -> Result<(), String> {
-        let payload = ErrorPayload {
-            uuid: uuid.map(|u| u.to_string()),
-            error_code: error_code.to_string(),
-            error_message: error_message.to_string(),
-            error_context,
-            timestamp: chrono::Utc::now().timestamp(),
-        };
-
-        app.emit("error", &payload)
-            .map_err(|e| format!("发送错误事件失败: {}", e))?;
-
-        Ok(())
-    }
-
     /// 发送Token统计事件
     pub fn send_token_stats(
         app: &AppHandle,
@@ -363,61 +331,3 @@ impl EventEmitter {
     }
 }
 
-/// 便捷宏，用于发送错误事件
-#[macro_export]
-macro_rules! emit_error {
-    ($app:expr, $uuid:expr, $error_code:expr, $error_message:expr) => {
-        $crate::events::EventEmitter::send_error(
-            $app,
-            Some($uuid),
-            $error_code,
-            $error_message,
-            None,
-        )
-        .unwrap_or_else(|e| eprintln!("发送错误事件失败: {}", e));
-    };
-    ($app:expr, $uuid:expr, $error_code:expr, $error_message:expr, $context:expr) => {
-        $crate::events::EventEmitter::send_error(
-            $app,
-            Some($uuid),
-            $error_code,
-            $error_message,
-            Some($context),
-        )
-        .unwrap_or_else(|e| eprintln!("发送错误事件失败: {}", e));
-    };
-}
-
-/// 便捷宏，用于发送工具执行成功事件
-#[macro_export]
-macro_rules! emit_tool_success {
-    ($app:expr, $uuid:expr, $tool_name:expr, $result:expr, $time_ms:expr) => {
-        $crate::events::EventEmitter::send_tool_executed(
-            $app,
-            $uuid,
-            $tool_name,
-            true,
-            Some($result),
-            None,
-            $time_ms,
-        )
-        .unwrap_or_else(|e| eprintln!("发送工具执行事件失败: {}", e));
-    };
-}
-
-/// 便捷宏，用于发送工具执行失败事件
-#[macro_export]
-macro_rules! emit_tool_error {
-    ($app:expr, $uuid:expr, $tool_name:expr, $error:expr, $time_ms:expr) => {
-        $crate::events::EventEmitter::send_tool_executed(
-            $app,
-            $uuid,
-            $tool_name,
-            false,
-            None,
-            Some($error.to_string()),
-            $time_ms,
-        )
-        .unwrap_or_else(|e| eprintln!("发送工具执行事件失败: {}", e));
-    };
-}

@@ -14,15 +14,6 @@ pub struct OpenAIMessage {
     pub tool_call_id: Option<String>,
 }
 
-/// 消息类型枚举
-#[derive(Debug, Clone, PartialEq)]
-pub enum MessageType {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
 /// 处理后的世界书条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessedWorldBookEntry {
@@ -105,17 +96,13 @@ impl ContextBuilder {
         let history_tokens = self.count_messages_tokens(&history_messages);
 
         // 4. 处理当前用户消息
-        let current_message = if let Some(content) = current_user_message {
-            Some(OpenAIMessage {
-                role: "user".to_string(),
-                content: content.to_string(),
-                name: None,
-                tool_calls: None,
-                tool_call_id: None,
-            })
-        } else {
-            None
-        };
+        let current_message = current_user_message.map(|content| OpenAIMessage {
+            role: "user".to_string(),
+            content: content.to_string(),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        });
 
         let current_tokens = current_message.as_ref()
             .map(|msg| self.count_message_tokens(msg))

@@ -1,8 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use png::{Decoder, Encoder};
-use std::fs::File;
-use std::io::{BufReader, BufWriter};
-use std::path::Path;
 
 /// PNG 元数据处理错误
 #[derive(Debug)]
@@ -58,81 +55,6 @@ impl From<base64::DecodeError> for PngMetadataError {
 pub struct PngMetadataUtils;
 
 impl PngMetadataUtils {
-    /// 将角色卡数据写入 PNG 文件
-    ///
-    /// # 参数
-    /// * `source_png_path` - 源 PNG 文件路径
-    /// * `output_png_path` - 输出 PNG 文件路径
-    /// * `character_json` - 角色卡 JSON 字符串
-    ///
-    /// # 返回
-    /// * `Ok(())` - 成功
-    /// * `Err(PngMetadataError)` - 错误信息
-    pub fn write_character_data_to_png<P: AsRef<Path>>(
-        source_png_path: P,
-        output_png_path: P,
-        character_json: &str,
-    ) -> Result<(), PngMetadataError> {
-        // 读取源 PNG 文件
-        let file = File::open(source_png_path)?;
-        let reader = BufReader::new(file);
-        let decoder = Decoder::new(reader);
-        let mut reader = decoder.read_info()?;
-
-        let info = reader.info().clone();
-        let width = info.width;
-        let height = info.height;
-        let color_type = info.color_type;
-        let bit_depth = info.bit_depth;
-
-        // 读取图像数据
-        let mut buf = vec![0; reader.output_buffer_size()];
-        let _info = reader.next_frame(&mut buf)?;
-
-        // 创建输出文件
-        let output_file = File::create(output_png_path)?;
-        let w = BufWriter::new(output_file);
-
-        let mut encoder = Encoder::new(w, width, height);
-        encoder.set_color(color_type);
-        encoder.set_depth(bit_depth);
-
-        // 将 JSON 转为 Base64
-        let base64_data = STANDARD.encode(character_json.as_bytes());
-
-        // 添加 tEXt 块
-        encoder.add_text_chunk("chara".to_string(), base64_data)?;
-
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(&buf)?;
-
-        Ok(())
-    }
-
-    /// 检查 PNG 文件是否包含角色卡数据
-    ///
-    /// # 参数
-    /// * `png_path` - PNG 文件路径
-    ///
-    /// # 返回
-    /// * `Ok(bool)` - true 表示包含角色卡数据
-    pub fn has_character_data<P: AsRef<Path>>(png_path: P) -> Result<bool, PngMetadataError> {
-        let file = File::open(png_path)?;
-        let reader = BufReader::new(file);
-        let decoder = Decoder::new(reader);
-        let reader = decoder.read_info()?;
-
-        // 查找 tEXt 块中的 "chara" 关键词
-        let text_chunks = &reader.info().uncompressed_latin1_text;
-        for chunk in text_chunks {
-            if chunk.keyword == "chara" {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
-    }
-
     /// 从字节数组中读取角色卡数据
     ///
     /// # 参数

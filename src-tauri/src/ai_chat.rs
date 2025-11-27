@@ -342,7 +342,7 @@ impl AIChatService {
                 .into_iter()
                 .map(|choice| {
                     ChatCompletionChoice {
-                        index: choice.index as u32,
+                        index: choice.index,
                         message: ChatMessage {
                             role: match choice.message.role {
                                 async_openai::types::Role::System => MessageRole::System,
@@ -353,23 +353,19 @@ impl AIChatService {
                             },
                             content: choice.message.content.unwrap_or_default(),
                             name: None, // async-openai 的消息没有 name 字段
-                            tool_calls: if let Some(calls) = &choice.message.tool_calls {
-                                Some(
-                                    calls
-                                        .iter()
-                                        .map(|call| ToolCallData {
-                                            id: call.id.clone(),
-                                            call_type: "function".to_string(),
-                                            function: ToolCallFunctionData {
-                                                name: call.function.name.clone(),
-                                                arguments: call.function.arguments.clone(),
-                                            },
-                                        })
-                                        .collect(),
-                                )
-                            } else {
-                                None
-                            },
+                            tool_calls: choice.message.tool_calls.as_ref().map(|calls| {
+                                calls
+                                    .iter()
+                                    .map(|call| ToolCallData {
+                                        id: call.id.clone(),
+                                        call_type: "function".to_string(),
+                                        function: ToolCallFunctionData {
+                                            name: call.function.name.clone(),
+                                            arguments: call.function.arguments.clone(),
+                                        },
+                                    })
+                                    .collect()
+                            }),
                             tool_call_id: None,
                         },
                         finish_reason: choice

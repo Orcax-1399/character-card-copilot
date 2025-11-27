@@ -23,7 +23,6 @@ pub async fn get_available_commands(app_handle: tauri::AppHandle) -> Result<Vec<
     let context = CommandContext {
         session_uuid,
         app_handle,
-        user_input: None,
     };
 
     Ok(COMMAND_REGISTRY.get_available_commands(&context).await)
@@ -40,7 +39,6 @@ pub async fn search_commands(
     let context = CommandContext {
         session_uuid,
         app_handle,
-        user_input: None,
     };
 
     Ok(COMMAND_REGISTRY.search_commands(&query, &context).await)
@@ -51,14 +49,13 @@ pub async fn search_commands(
 pub async fn execute_command(
     app_handle: tauri::AppHandle,
     command_id: String,
-    user_input: Option<String>,
+    _user_input: Option<String>,
 ) -> Result<CommandResult, String> {
     let session_uuid = crate::character_state::get_active_character();
 
     let context = CommandContext {
         session_uuid: session_uuid.clone(),
         app_handle: app_handle.clone(),
-        user_input,
     };
 
     // 发送命令开始执行事件（使用 progress 事件）

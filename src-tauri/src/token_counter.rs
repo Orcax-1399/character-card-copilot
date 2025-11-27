@@ -1,6 +1,7 @@
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use tiktoken_rs::{cl100k_base, CoreBPE};
 use std::collections::HashSet;
+use tiktoken_rs::{cl100k_base, CoreBPE};
 
 /// Token 计数结果
 #[derive(Debug, Serialize, Deserialize)]
@@ -72,15 +73,10 @@ impl Default for TokenCounter {
 }
 
 /// 全局 Token 计数器实例
-static mut TOKEN_COUNTER: Option<TokenCounter> = None;
-static INIT: std::sync::Once = std::sync::Once::new();
+static TOKEN_COUNTER: Lazy<TokenCounter> =
+    Lazy::new(|| TokenCounter::new().expect("Failed to initialize TokenCounter"));
 
 /// 获取全局 Token 计数器实例
 pub fn get_token_counter() -> &'static TokenCounter {
-    unsafe {
-        INIT.call_once(|| {
-            TOKEN_COUNTER = Some(TokenCounter::new().expect("Failed to initialize TokenCounter"));
-        });
-        TOKEN_COUNTER.as_ref().unwrap()
-    }
+    &TOKEN_COUNTER
 }

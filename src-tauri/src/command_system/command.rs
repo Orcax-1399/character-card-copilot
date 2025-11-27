@@ -40,8 +40,6 @@ pub struct CommandContext {
     pub session_uuid: Option<String>,
     /// Tauri应用句柄
     pub app_handle: tauri::AppHandle,
-    /// 用户输入（可选）
-    pub user_input: Option<String>,
 }
 
 /// 命令执行结果

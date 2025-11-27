@@ -102,7 +102,8 @@ pub struct CharacterData {
     pub uuid: String,
     pub meta: CharacterMeta,
     pub card: TavernCardV2,
-    pub backgroundPath: String,
+    #[serde(rename = "backgroundPath")]
+    pub background_path: String,
 }
 
 /// 角色卡存储服务
@@ -137,17 +138,17 @@ impl CharacterStorage {
     }
 
     /// 将图片路径转换为base64格式
-    fn convert_image_path_to_base64(imagePath: &str) -> String {
-        if imagePath.starts_with("data:") {
+    fn convert_image_path_to_base64(image_path: &str) -> String {
+        if image_path.starts_with("data:") {
             // 已经是base64格式
-            return imagePath.to_string();
+            return image_path.to_string();
         }
 
         // 如果是文件路径，转换为base64
-        if let Ok(image_data) = fs::read(imagePath) {
+        if let Ok(image_data) = fs::read(image_path) {
             let base64_data = STANDARD.encode(&image_data);
             // 根据文件扩展名确定mime类型
-            if let Some(extension) = std::path::Path::new(imagePath)
+            if let Some(extension) = std::path::Path::new(image_path)
                 .extension()
                 .and_then(|s| s.to_str())
             {
@@ -189,8 +190,8 @@ impl CharacterStorage {
                     match FileUtils::read_json_file::<CharacterData>(&card_file) {
                         Ok(mut character) => {
                             // 转换图片路径为base64格式
-                            character.backgroundPath =
-                                Self::convert_image_path_to_base64(&character.backgroundPath);
+                            character.background_path =
+                                Self::convert_image_path_to_base64(&character.background_path);
                             characters.push(character);
                         }
                         Err(e) => eprintln!(
@@ -219,7 +220,7 @@ impl CharacterStorage {
 
         let mut character = FileUtils::read_json_file::<CharacterData>(&card_file)?;
         // 转换图片路径为base64格式
-        character.backgroundPath = Self::convert_image_path_to_base64(&character.backgroundPath);
+        character.background_path = Self::convert_image_path_to_base64(&character.background_path);
         Ok(Some(character))
     }
 
@@ -264,7 +265,7 @@ impl CharacterStorage {
             uuid: uuid.clone(),
             meta,
             card,
-            backgroundPath: String::new(),
+            background_path: String::new(),
         };
 
         // 保存角色卡文件
@@ -320,7 +321,7 @@ impl CharacterStorage {
                     if let Some(file_name) = file_path.file_name() {
                         if let Some(name_str) = file_name.to_str() {
                             if name_str.starts_with(&format!("{}_background", uuid))
-                                || name_str == &format!("{}_card.png", uuid)
+                                || name_str == format!("{}_card.png", uuid)
                             {
                                 let _ = FileUtils::delete_path(&file_path);
                             }
@@ -375,7 +376,7 @@ impl CharacterStorage {
         let mut character_data: CharacterData = FileUtils::read_json_file(&card_file)?;
 
         // 更新背景路径为base64格式和修改时间
-        character_data.backgroundPath = background_path.to_string();
+        character_data.background_path = background_path.to_string();
         character_data.meta.updated_at = chrono::Utc::now().to_rfc3339();
 
         FileUtils::write_json_file(&card_file, &character_data)?;
@@ -405,13 +406,13 @@ impl CharacterStorage {
             .map_err(|e| format!("序列化角色卡失败: {}", e))?;
 
         // 检查是否有背景图片
-        let has_image = !character.backgroundPath.is_empty();
+        let has_image = !character.background_path.is_empty();
 
         if has_image {
             // 从 base64 解码图片数据
-            let image_data = if character.backgroundPath.starts_with("data:") {
+            let image_data = if character.background_path.starts_with("data:") {
                 // 提取 base64 部分
-                let parts: Vec<&str> = character.backgroundPath.split(',').collect();
+                let parts: Vec<&str> = character.background_path.split(',').collect();
                 if parts.len() != 2 {
                     return Err("无效的图片数据格式".to_string());
                 }
@@ -419,7 +420,7 @@ impl CharacterStorage {
                     .map_err(|e| format!("解码图片数据失败: {}", e))?
             } else {
                 // 如果是文件路径，读取文件
-                fs::read(&character.backgroundPath)
+                fs::read(&character.background_path)
                     .map_err(|e| format!("读取背景图片失败: {}", e))?
             };
 
@@ -501,7 +502,7 @@ impl CharacterStorage {
             uuid: uuid.clone(),
             meta,
             card,
-            backgroundPath: background_path,
+            background_path,
         };
 
         // 保存角色卡
@@ -564,7 +565,7 @@ impl CharacterStorage {
             uuid: uuid.clone(),
             meta,
             card,
-            backgroundPath: background_path,
+            background_path,
         };
 
         // 保存角色卡
