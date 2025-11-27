@@ -7,7 +7,7 @@
             @keydown="handleKeydown"
             :disabled="disabled"
             placeholder="输入消息... (Enter发送，Shift+Enter换行)"
-            class="flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
+            class="chat-input-textarea flex-1 resize-none border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
             style="
                 height: 40px;
                 min-height: 40px;
@@ -19,9 +19,8 @@
         <button
             @click="handleSend"
             :disabled="!userInput.trim() || disabled"
-            class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg transition-colors flex items-center justify-center self-end"
+            class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-full transition-colors flex items-center justify-center self-end w-10 h-10"
             title="发送消息"
-            style="height: 40px"
         >
             <svg
                 v-if="!loading"
@@ -80,36 +79,25 @@ const emit = defineEmits<Emits>();
 const userInput = ref('');
 const textareaRef = ref<HTMLTextAreaElement>();
 const inputRows = ref(1);
+const MIN_TEXTAREA_HEIGHT = 40;
+const LINE_HEIGHT = 24;
+const MAX_ROWS = 5;
+const MAX_HEIGHT = LINE_HEIGHT * MAX_ROWS;
 
 /**
  * 自动调整输入框高度
  */
 function adjustTextareaHeight() {
     nextTick(() => {
-        if (textareaRef.value) {
-            const textarea = textareaRef.value;
-            const lineHeight = 24; // 行高24px
-            const maxRows = 5;
-            const maxHeight = lineHeight * maxRows;
+        if (!textareaRef.value) return;
+        const textarea = textareaRef.value;
 
-            // 先重置高度为最小高度
-            textarea.style.height = '40px';
-
-            // 获取实际需要的行数
-            const lines = textarea.value.split('\n').length;
-
-            // 只有当内容包含换行符或者内容长度超过一行时才调整高度
-            if (lines > 1 || textarea.value.length > 60) {
-                const scrollHeight = textarea.scrollHeight;
-                const newHeight = Math.min(scrollHeight, maxHeight);
-                textarea.style.height = newHeight + 'px';
-                inputRows.value = Math.min(lines, maxRows);
-            } else {
-                // 保持最小高度
-                textarea.style.height = '40px';
-                inputRows.value = 1;
-            }
-        }
+        textarea.style.height = `${MIN_TEXTAREA_HEIGHT}px`;
+        const scrollHeight = textarea.scrollHeight;
+        const newHeight = Math.min(scrollHeight, MAX_HEIGHT);
+        textarea.style.height = `${Math.max(newHeight, MIN_TEXTAREA_HEIGHT)}px`;
+        const estimatedRows = Math.ceil(newHeight / LINE_HEIGHT);
+        inputRows.value = Math.min(Math.max(estimatedRows, 1), MAX_ROWS);
     });
 }
 
@@ -117,17 +105,11 @@ function adjustTextareaHeight() {
  * 处理用户输入
  */
 function handleInput() {
-    // 发送输入变化事件
     emit('input', userInput.value);
-
-    // 只有当输入内容包含换行符时才调整高度
-    if (userInput.value.includes('\n') || userInput.value.length > 80) {
+    if (userInput.value) {
         adjustTextareaHeight();
-    } else {
-        // 如果没有换行符且长度较短，保持最小高度
-        if (textareaRef.value) {
-            textareaRef.value.style.height = '40px';
-        }
+    } else if (textareaRef.value) {
+        textareaRef.value.style.height = `${MIN_TEXTAREA_HEIGHT}px`;
         inputRows.value = 1;
     }
 }
@@ -175,7 +157,7 @@ function handleSend() {
     // 清空输入框并重置高度
     userInput.value = '';
     if (textareaRef.value) {
-        textareaRef.value.style.height = '40px';
+        textareaRef.value.style.height = `${MIN_TEXTAREA_HEIGHT}px`;
     }
     inputRows.value = 1;
 }
@@ -196,7 +178,7 @@ function setValue(value: string) {
 function clear() {
     userInput.value = '';
     if (textareaRef.value) {
-        textareaRef.value.style.height = '40px';
+        textareaRef.value.style.height = `${MIN_TEXTAREA_HEIGHT}px`;
     }
     inputRows.value = 1;
 }
@@ -215,5 +197,9 @@ textarea {
 
 textarea:focus {
     outline: none;
+}
+
+.chat-input-textarea {
+    transition: height 0.2s ease, min-height 0.2s ease;
 }
 </style>
