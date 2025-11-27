@@ -10,6 +10,9 @@ import {
 } from "@/services/characterStorage";
 import AIPanel from "@/components/AIPanel.vue";
 import WorldBookEditor from "@/components/WorldBookEditor.vue";
+import CharacterEditorPanel from "@/components/editor/CharacterEditorPanel.vue";
+import EditorModeSwitcher from "@/components/editor/EditorModeSwitcher.vue";
+import AIPanelToggleCard from "@/components/editor/AIPanelToggleCard.vue";
 import {
     uploadBackgroundImage,
     updateCharacterBackgroundPath,
@@ -664,339 +667,20 @@ onUnmounted(async () => {
                             </svg>
                             导出角色
                         </button>
-                        <button
-                            @click="toggleEditorMode"
-                            class="bg-purple-500 hover:bg-purple-700 text-white text-sm font-medium py-1.5 px-3 rounded-full flex items-center gap-1.5"
-                        >
-                            <svg
-                                class="w-3.5 h-3.5"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                    stroke-width="2"
-                                    d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-                                />
-                            </svg>
-                            {{
-                                editorMode === "character"
-                                    ? "世界书编辑"
-                                    : "角色编辑"
-                            }}
-                        </button>
+                        <EditorModeSwitcher
+                            :mode="editorMode"
+                            @toggle-mode="toggleEditorMode"
+                        />
                     </div>
 
                     <!-- 角色编辑表单 -->
-                    <div v-if="editorMode === 'character'" class="space-y-4">
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    角色描述
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.description || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.description"
-                                @blur="
-                                    updateField(
-                                        'description',
-                                        fullCharacterData?.card?.data?.description || '',
-                                        characterData.description,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="5"
-                                placeholder="角色的物理外观、身份和基本设定"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    性格特点
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.personality || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.personality"
-                                @blur="
-                                    updateField(
-                                        'personality',
-                                        fullCharacterData?.card?.data?.personality || '',
-                                        characterData.personality,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="6"
-                                placeholder="描述角色的性格特征"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    场景设定
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.scenario || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.scenario"
-                                @blur="
-                                    updateField(
-                                        'scenario',
-                                        fullCharacterData?.card?.data?.scenario || '',
-                                        characterData.scenario,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="3"
-                                placeholder="描述角色所处的场景和环境"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    开场白
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.first_mes || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.first_mes"
-                                @blur="
-                                    updateField(
-                                        'first_mes',
-                                        fullCharacterData?.card?.data?.first_mes || '',
-                                        characterData.first_mes,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="4"
-                                placeholder="角色的第一句话或开场问候"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    对话示例
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.mes_example || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.mes_example"
-                                @blur="
-                                    updateField(
-                                        'mes_example',
-                                        fullCharacterData?.card?.data?.mes_example || '',
-                                        characterData.mes_example,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="6"
-                                placeholder="示例对话格式，展示角色的说话风格"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    创作者笔记
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.creator_notes || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.creator_notes"
-                                @blur="
-                                    updateField(
-                                        'creator_notes',
-                                        fullCharacterData?.card?.data?.creator_notes || '',
-                                        characterData.creator_notes,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="4"
-                                placeholder="创作时的备注和说明"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    系统提示词
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.system_prompt || 0 }} tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.system_prompt"
-                                @blur="
-                                    updateField(
-                                        'system_prompt',
-                                        fullCharacterData?.card?.data?.system_prompt || '',
-                                        characterData.system_prompt,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="4"
-                                placeholder="AI系统使用的提示词"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    历史后指令
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{
-                                        tokenCounts.post_history_instructions ||
-                                        0
-                                    }}
-                                    tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="
-                                    characterData.post_history_instructions
-                                "
-                                @blur="
-                                    updateField(
-                                        'post_history_instructions',
-                                        fullCharacterData?.card?.data?.post_history_instructions || '',
-                                        characterData.post_history_instructions,
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="3"
-                                placeholder="对话历史后的处理指令"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    备用问候语
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.alternate_greetings || 0 }}
-                                    tokens
-                                </span>
-                            </div>
-                            <textarea
-                                v-model="characterData.alternate_greetings"
-                                @blur="
-                                    updateField(
-                                        'alternate_greetings',
-                                        fullCharacterData?.card?.data?.alternate_greetings || [],
-                                        characterData.alternate_greetings.split('\n'),
-                                    )
-                                "
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3 resize-none"
-                                rows="3"
-                                placeholder="备用开场白，用换行分隔多个问候语"
-                            ></textarea>
-                        </div>
-
-                        <div>
-                            <div class="flex items-center justify-between mb-2">
-                                <label
-                                    class="block text-sm font-semibold text-gray-700"
-                                >
-                                    标签
-                                </label>
-                                <span class="text-xs text-gray-500">
-                                    {{ tokenCounts.tags || 0 }} tokens
-                                </span>
-                            </div>
-                            <input
-                                v-model="characterData.tags"
-                                @blur="
-                                    updateField(
-                                        'tags',
-                                        fullCharacterData?.card?.data?.tags || [],
-                                        characterData.tags.split(',').map(t => t.trim()),
-                                    )
-                                "
-                                type="text"
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
-                                placeholder="角色标签，用逗号分隔"
-                            />
-                        </div>
-
-                        <div>
-                            <label
-                                class="block text-sm font-semibold text-gray-700 mb-2"
-                                >创作者</label
-                            >
-                            <input
-                                v-model="characterData.creator"
-                                @blur="
-                                    updateField(
-                                        'creator',
-                                        fullCharacterData?.card?.data?.creator || '',
-                                        characterData.creator,
-                                    )
-                                "
-                                type="text"
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
-                                placeholder="创作者名称"
-                            />
-                        </div>
-
-                        <div>
-                            <label
-                                class="block text-sm font-semibold text-gray-700 mb-2"
-                                >角色版本</label
-                            >
-                            <input
-                                v-model="characterData.character_version"
-                                @blur="
-                                    updateField(
-                                        'character_version',
-                                        fullCharacterData?.card?.data?.character_version || '',
-                                        characterData.character_version,
-                                    )
-                                "
-                                type="text"
-                                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-3"
-                                placeholder="角色卡版本号"
-                            />
-                        </div>
+                    <div v-if="editorMode === 'character'">
+                        <CharacterEditorPanel
+                            :character-data="characterData"
+                            :full-character-data="fullCharacterData"
+                            :token-counts="tokenCounts"
+                            @update-field="updateField"
+                        />
                     </div>
 
                     <!-- 世界书编辑器 -->
@@ -1022,28 +706,10 @@ onUnmounted(async () => {
             />
 
             <!-- 显示/隐藏面板按钮 -->
-            <div
+            <AIPanelToggleCard
                 v-if="!aiPanelVisible"
-                class="card rounded-xl bg-white p-4 shadow-2xl flex items-center justify-center cursor-pointer hover:bg-gray-50 transition-colors"
-                @click="toggleAIPanel"
-            >
-                <div class="text-center text-gray-500">
-                    <svg
-                        class="w-6 h-6 mx-auto mb-2"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M15 19l-7-7 7-7"
-                        />
-                    </svg>
-                    <span class="text-xs">显示 AI 面板</span>
-                </div>
-            </div>
+                @toggle="toggleAIPanel"
+            />
         </div>
     </div>
 </template>
