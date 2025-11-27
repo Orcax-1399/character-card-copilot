@@ -892,6 +892,15 @@ pub async fn send_chat_message(
     // 发送用户消息事件
     EventEmitter::send_message_sent(&app_handle, &session.uuid, &user_message)?;
 
+    // 先保存用户消息，避免后续 AI 回复失败导致历史不同步
+    session
+        .save_history(&app_handle)
+        .await
+        .map_err(|e| format!("保存用户消息失败: {}", e))?;
+
+    // 保存成功后更新会话状态（更新 last_saved_index）
+    SESSION_MANAGER.update_session(session.clone())?;
+
     // 调用公共的AI生成逻辑
     generate_ai_response(&app_handle, &mut session, "chat").await
 }
