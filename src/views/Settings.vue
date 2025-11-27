@@ -11,7 +11,6 @@ import {
     updateApiConfig,
     setDefaultApiConfig,
     testApiConnection,
-    getAllApiConfigs,
 } from "@/services/apiConfig";
 
 const appStore = useAppStore();
