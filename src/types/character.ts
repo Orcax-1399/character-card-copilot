@@ -162,7 +162,8 @@ export interface CharacterData {
   uuid: string;
   meta: CharacterMeta;
   card: TavernCardV2;
-  backgroundPath: string; // background.png 路径
+  backgroundPath: string; // card.png 路径（绝对路径）
+  thumbnailPath: string; // thumbnail.png 路径（绝对路径）
 }
 
 /**

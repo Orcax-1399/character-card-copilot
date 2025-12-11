@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch, nextTick, onUnmounted } from "vue";
+import { onMounted, ref, watch, nextTick, onUnmounted, computed, onBeforeUnmount } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import { useCharacterStore } from "@/stores/character";
@@ -20,6 +20,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { CharacterStateService } from "@/services/characterState";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { tokenCounter } from "@/utils/tokenCounter";
 import { useNotification } from "@/composables/useNotification";
 import { useModal } from "@/composables/useModal";
@@ -41,8 +42,61 @@ const isLoading = ref(false);
 const characterUUID = ref<string>("");
 const aiPanelVisible = ref(true);
 const backgroundPath = ref<string>("");
+const thumbnailPath = ref<string>("");
 const isUploading = ref(false);
 const ALTERNATE_GREETING_MARKER = "<START_ALT>";
+
+const avatarSrc = computed(() => {
+    return imageSrc.value;
+});
+
+const imageSrc = ref("");
+let revokeUrl: string | null = null;
+
+function revokeImageUrl() {
+    if (revokeUrl) {
+        URL.revokeObjectURL(revokeUrl);
+        revokeUrl = null;
+    }
+}
+
+async function loadAvatar(path: string) {
+    if (!path) {
+        imageSrc.value = "";
+        revokeImageUrl();
+        return;
+    }
+    if (path.startsWith("data:")) {
+        revokeImageUrl();
+        imageSrc.value = path;
+        return;
+    }
+    try {
+        const normalized = path.replace(/\\/g, "/");
+        const data = await readFile(normalized);
+        const blob = new Blob([data], { type: "image/png" });
+        revokeImageUrl();
+        const url = URL.createObjectURL(blob);
+        imageSrc.value = url;
+        revokeUrl = url;
+    } catch (error) {
+        console.error("读取头像失败", error);
+        revokeImageUrl();
+        imageSrc.value = "";
+    }
+}
+
+watch(
+    () => [thumbnailPath.value, backgroundPath.value],
+    ([thumb, bg]) => {
+        loadAvatar(thumb || bg || "");
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => {
+    revokeImageUrl();
+});
 
 // 编辑器模式：'character' 或 'worldBook'
 const editorMode = ref<"character" | "worldBook">("character");
@@ -260,6 +314,7 @@ async function updateEditorFromCharacterData(incomingCharacterData: any) {
 
         // 更新背景路径
         backgroundPath.value = incomingCharacterData.backgroundPath || "";
+        thumbnailPath.value = incomingCharacterData.thumbnailPath || "";
 
         console.log("Editor: 角色数据已同步到编辑器");
     } catch (error) {
@@ -293,12 +348,13 @@ async function handleAvatarClick() {
                 characterUUID.value,
                 file,
             );
-            backgroundPath.value = uploadedPath;
+            backgroundPath.value = uploadedPath.backgroundPath;
+            thumbnailPath.value = uploadedPath.thumbnailPath;
 
             // 更新角色的background_path字段
             await updateCharacterBackgroundPath(
                 characterUUID.value,
-                uploadedPath,
+                uploadedPath.backgroundPath,
             );
             console.log("头像上传成功:", uploadedPath);
         } catch (error) {
@@ -347,6 +403,7 @@ async function loadCharacterData(uuid: string) {
         if (character) {
             characterUUID.value = uuid;
             backgroundPath.value = character.backgroundPath || "";
+            thumbnailPath.value = character.thumbnailPath || "";
 
             // 🔥 新增：触发后端会话加载，让AI可以看到角色数据
             console.log("Editor: 触发后端会话加载...", uuid);
@@ -638,12 +695,8 @@ onUnmounted(async () => {
 
                                 <!-- 显示上传的图片 -->
                                 <img
-                                    v-if="backgroundPath"
-                                    :src="
-                                        backgroundPath.startsWith('data:')
-                                            ? backgroundPath
-                                            : `file://${backgroundPath}`
-                                    "
+                                    v-if="avatarSrc"
+                                    :src="avatarSrc"
                                     alt="角色头像"
                                     class="w-full h-full object-cover"
                                 />

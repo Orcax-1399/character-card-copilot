@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted, ref, watch, onBeforeUnmount } from "vue";
+import { readFile } from "@tauri-apps/plugin-fs";
 import type { CharacterData } from "@/types/character";
 
 const props = defineProps<{
@@ -22,16 +23,68 @@ function handleImageError(event: Event) {
     // 添加调试信息
     console.error("Failed to load character image:", {
         backgroundPath: props.character.backgroundPath,
+        thumbnailPath: props.character.thumbnailPath,
         startsWithData: props.character.backgroundPath.startsWith("data:"),
         length: props.character.backgroundPath.length,
     });
 }
+
+const imageSrc = ref("");
+let revokeUrl: string | null = null;
+
+function revokeImageUrl() {
+    if (revokeUrl) {
+        URL.revokeObjectURL(revokeUrl);
+        revokeUrl = null;
+    }
+}
+
+async function loadImage(path: string) {
+    if (!path) {
+        imageSrc.value = "";
+        revokeImageUrl();
+        return;
+    }
+
+    if (path.startsWith("data:")) {
+        revokeImageUrl();
+        imageSrc.value = path;
+        return;
+    }
+
+    try {
+        const normalized = path.replace(/\\/g, "/");
+        const data = await readFile(normalized);
+        const blob = new Blob([data], { type: "image/png" });
+        revokeImageUrl();
+        const url = URL.createObjectURL(blob);
+        imageSrc.value = url;
+        revokeUrl = url;
+    } catch (error) {
+        console.error("读取角色图片失败", error);
+        revokeImageUrl();
+        imageSrc.value = "";
+    }
+}
+
+watch(
+    () => [props.character.thumbnailPath, props.character.backgroundPath],
+    ([thumb, bg]) => {
+        loadImage(thumb || bg || "");
+    },
+    { immediate: true },
+);
+
+onBeforeUnmount(() => {
+    revokeImageUrl();
+});
 
 onMounted(() => {
     console.log(
         `CharacterCard mounted for ${props.character.card.data.name}:`,
         {
             backgroundPath: props.character.backgroundPath,
+            thumbnailPath: props.character.thumbnailPath,
             isBase64: props.character.backgroundPath.startsWith("data:"),
         },
     );
@@ -45,12 +98,8 @@ onMounted(() => {
     >
         <div class="aspect-square relative bg-gray-200">
             <img
-                v-if="character.backgroundPath"
-                :src="
-                    character.backgroundPath.startsWith('data:')
-                        ? character.backgroundPath
-                        : `file://${character.backgroundPath}`
-                "
+                v-if="imageSrc"
+                :src="imageSrc"
                 :alt="character.card.data.name"
                 class="w-full h-full object-cover"
                 @error="handleImageError"

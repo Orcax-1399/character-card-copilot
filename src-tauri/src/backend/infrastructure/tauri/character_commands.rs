@@ -100,7 +100,7 @@ pub async fn upload_background_image(
     uuid: String,
     image_data: Vec<u8>,
     extension: String,
-) -> Result<String, String> {
+) -> Result<crate::character_storage::ImagePaths, String> {
     CharacterStorage::upload_background_image(&app_handle, &uuid, &image_data, &extension)
 }
 

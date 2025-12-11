@@ -1,6 +1,11 @@
 import type { CharacterData, TavernCardV2 } from '@/types/character';
 import { invoke } from '@tauri-apps/api/core';
 
+export interface ImagePaths {
+  backgroundPath: string;
+  thumbnailPath: string;
+}
+
 /**
  * 角色卡存储服务
  * 管理角色卡的文件系统存储和读取
@@ -106,7 +111,7 @@ export async function deleteCharacter(uuid: string): Promise<void> {
  * @param uuid 角色UUID
  * @param file 图片文件
  */
-export async function uploadBackgroundImage(uuid: string, file: File): Promise<string> {
+export async function uploadBackgroundImage(uuid: string, file: File): Promise<ImagePaths> {
   try {
     // 将File转换为ArrayBuffer，然后转换为Uint8Array
     const arrayBuffer = await file.arrayBuffer();
@@ -115,13 +120,13 @@ export async function uploadBackgroundImage(uuid: string, file: File): Promise<s
     // 获取文件扩展名
     const extension = file.name.split('.').pop() || 'png';
 
-    const backgroundPath = await invoke<string>('upload_background_image', {
+    const paths = await invoke<ImagePaths>('upload_background_image', {
       uuid,
       imageData: Array.from(imageBytes),
       extension
     });
 
-    return backgroundPath;
+    return paths;
   } catch (error) {
     console.error('上传背景图片失败:', error);
     throw new Error(error as string);

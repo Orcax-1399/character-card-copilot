@@ -1,9 +1,10 @@
 use super::file_utils::FileUtils;
 use super::png_utils::PngMetadataUtils;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use image::{imageops::FilterType, DynamicImage, ImageFormat};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// 角色卡元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +105,19 @@ pub struct CharacterData {
     pub card: TavernCardV2,
     #[serde(rename = "backgroundPath")]
     pub background_path: String,
+    #[serde(rename = "thumbnailPath", default)]
+    pub thumbnail_path: String,
+}
+
+const CARD_FILE_NAME: &str = "card.png";
+const THUMBNAIL_FILE_NAME: &str = "thumbnail.png";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImagePaths {
+    #[serde(rename = "backgroundPath")]
+    pub background_path: String,
+    #[serde(rename = "thumbnailPath")]
+    pub thumbnail_path: String,
 }
 
 /// 角色卡存储服务
@@ -118,15 +132,45 @@ impl CharacterStorage {
         Ok(characters_dir)
     }
 
+    /// 获取角色目录
+    fn get_character_dir(app_handle: &tauri::AppHandle, uuid: &str) -> Result<PathBuf, String> {
+        let characters_dir = Self::get_characters_dir(app_handle)?;
+        let character_dir = characters_dir.join(uuid);
+        FileUtils::ensure_dir_exists(&character_dir)?;
+        Ok(character_dir)
+    }
+
     /// 获取角色卡文件路径
     fn get_character_file_path(
         app_handle: &tauri::AppHandle,
         uuid: &str,
     ) -> Result<PathBuf, String> {
-        let characters_dir = Self::get_characters_dir(app_handle)?;
-        let character_dir = characters_dir.join(uuid);
-        FileUtils::ensure_dir_exists(&character_dir)?;
+        let character_dir = Self::get_character_dir(app_handle, uuid)?;
+        Ok(character_dir.join("character.json"))
+    }
+
+    /// 兼容旧文件名 card.json（仅用于迁移）
+    fn get_legacy_character_file_path(
+        app_handle: &tauri::AppHandle,
+        uuid: &str,
+    ) -> Result<PathBuf, String> {
+        let character_dir = Self::get_character_dir(app_handle, uuid)?;
         Ok(character_dir.join("card.json"))
+    }
+
+    /// 获取角色原始图片路径（固定文件名）
+    fn get_card_image_path(app_handle: &tauri::AppHandle, uuid: &str) -> Result<PathBuf, String> {
+        let character_dir = Self::get_character_dir(app_handle, uuid)?;
+        Ok(character_dir.join(CARD_FILE_NAME))
+    }
+
+    /// 获取角色缩略图路径（固定文件名）
+    fn get_thumbnail_image_path(
+        app_handle: &tauri::AppHandle,
+        uuid: &str,
+    ) -> Result<PathBuf, String> {
+        let character_dir = Self::get_character_dir(app_handle, uuid)?;
+        Ok(character_dir.join(THUMBNAIL_FILE_NAME))
     }
 
     /// 获取背景图片目录
@@ -137,36 +181,142 @@ impl CharacterStorage {
         Ok(backgrounds_dir)
     }
 
-    /// 将图片路径转换为base64格式
-    fn convert_image_path_to_base64(image_path: &str) -> String {
-        if image_path.starts_with("data:") {
-            // 已经是base64格式
-            return image_path.to_string();
+    /// 将 data URL 解码为字节
+    fn decode_data_url(data_url: &str) -> Result<Vec<u8>, String> {
+        if !data_url.starts_with("data:") {
+            return Err("无效的 data URL".to_string());
         }
 
-        // 如果是文件路径，转换为base64
-        if let Ok(image_data) = fs::read(image_path) {
-            let base64_data = STANDARD.encode(&image_data);
-            // 根据文件扩展名确定mime类型
-            if let Some(extension) = std::path::Path::new(image_path)
-                .extension()
-                .and_then(|s| s.to_str())
-            {
-                let mime_type = match extension.to_lowercase().as_str() {
-                    "png" => "image/png",
-                    "jpg" | "jpeg" => "image/jpeg",
-                    "webp" => "image/webp",
-                    _ => "image/png",
-                };
-                format!("data:{};base64,{}", mime_type, base64_data)
-            } else {
-                // 如果无法确定扩展名，默认为png
-                format!("data:image/png;base64,{}", base64_data)
-            }
-        } else {
-            // 如果无法读取文件，返回空字符串
-            String::new()
+        let parts: Vec<&str> = data_url.split(',').collect();
+        if parts.len() != 2 {
+            return Err("无效的图片数据格式".to_string());
         }
+
+        STANDARD
+            .decode(parts[1])
+            .map_err(|e| format!("解码图片数据失败: {}", e))
+    }
+
+    /// 保存 card.png 与 thumbnail.png（均为 PNG）
+    fn write_card_and_thumbnail(
+        card_path: &Path,
+        thumbnail_path: &Path,
+        image_bytes: &[u8],
+    ) -> Result<(), String> {
+        let image = image::load_from_memory(image_bytes)
+            .map_err(|e| format!("解析图片失败: {}", e))?;
+
+        let mut card_file = fs::File::create(card_path)
+            .map_err(|e| format!("写入背景图片失败: {}", e))?;
+        image
+            .write_to(&mut card_file, ImageFormat::Png)
+            .map_err(|e| format!("写入背景图片失败: {}", e))?;
+
+        Self::write_thumbnail(&image, thumbnail_path)
+    }
+
+    /// 写入缩略图
+    fn write_thumbnail(image: &DynamicImage, thumbnail_path: &Path) -> Result<(), String> {
+        let resized = image.resize(320, 320, FilterType::Triangle);
+        let mut thumb_file = fs::File::create(thumbnail_path)
+            .map_err(|e| format!("写入缩略图失败: {}", e))?;
+        resized
+            .write_to(&mut thumb_file, ImageFormat::Png)
+            .map_err(|e| format!("写入缩略图失败: {}", e))
+    }
+
+    /// 如果缩略图缺失，从 card.png 生成
+    fn ensure_thumbnail_from_card(card_path: &Path, thumbnail_path: &Path) -> Result<(), String> {
+        if thumbnail_path.exists() || !card_path.exists() {
+            return Ok(());
+        }
+        let image = image::open(card_path).map_err(|e| format!("读取背景图片失败: {}", e))?;
+        Self::write_thumbnail(&image, thumbnail_path)
+    }
+
+    /// 将存储中的相对路径转换为绝对路径（返回给前端时使用）
+    fn apply_absolute_paths(
+        app_handle: &tauri::AppHandle,
+        character_data: &mut CharacterData,
+    ) -> Result<(), String> {
+        let character_dir = Self::get_character_dir(app_handle, &character_data.uuid)?;
+
+        if !character_data.background_path.is_empty() {
+            let path = Path::new(&character_data.background_path);
+            if !path.is_absolute() {
+                character_data.background_path =
+                    character_dir.join(path).to_string_lossy().to_string();
+            }
+        }
+
+        if !character_data.thumbnail_path.is_empty() {
+            let path = Path::new(&character_data.thumbnail_path);
+            if !path.is_absolute() {
+                character_data.thumbnail_path =
+                    character_dir.join(path).to_string_lossy().to_string();
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 迁移旧格式（base64 / 旧路径）到新文件结构，并在需要时回写 JSON
+    fn migrate_character_assets(
+        app_handle: &tauri::AppHandle,
+        character_file: &Path,
+        character_data: &mut CharacterData,
+    ) -> Result<(), String> {
+        let card_path = Self::get_card_image_path(app_handle, &character_data.uuid)?;
+        let thumbnail_path = Self::get_thumbnail_image_path(app_handle, &character_data.uuid)?;
+        let mut updated = false;
+
+        if !character_data.background_path.is_empty()
+            && character_data.background_path.starts_with("data:")
+        {
+            let image_bytes = Self::decode_data_url(&character_data.background_path)?;
+            Self::write_card_and_thumbnail(&card_path, &thumbnail_path, &image_bytes)?;
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+            updated = true;
+        } else if !character_data.background_path.is_empty() {
+            let path = Path::new(&character_data.background_path);
+            // 兼容旧的绝对路径或相对路径，统一迁移到固定文件名
+            let resolved_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                Self::get_character_dir(app_handle, &character_data.uuid)?.join(path)
+            };
+
+            if resolved_path.exists() && resolved_path != card_path {
+                let image_bytes = fs::read(&resolved_path)
+                    .map_err(|e| format!("读取背景图片失败: {}", e))?;
+                Self::write_card_and_thumbnail(&card_path, &thumbnail_path, &image_bytes)?;
+                character_data.background_path = CARD_FILE_NAME.to_string();
+                character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+                updated = true;
+            }
+        } else if card_path.exists() {
+            // JSON 缺失路径但文件已存在
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            updated = true;
+        }
+
+        // 缩略图缺失时尝试生成
+        if card_path.exists() && !thumbnail_path.exists() {
+            Self::ensure_thumbnail_from_card(&card_path, &thumbnail_path)?;
+        }
+
+        if character_data.thumbnail_path.is_empty() && thumbnail_path.exists() {
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+            updated = true;
+        }
+
+        if updated {
+            character_data.meta.updated_at = chrono::Utc::now().to_rfc3339();
+            FileUtils::write_json_file(character_file, character_data)?;
+        }
+
+        Ok(())
     }
 
     /// 获取所有角色卡列表
@@ -185,21 +335,42 @@ impl CharacterStorage {
             let path = entry.path();
 
             if path.is_dir() {
-                let card_file = path.join("card.json");
-                if card_file.exists() {
-                    match FileUtils::read_json_file::<CharacterData>(&card_file) {
-                        Ok(mut character) => {
-                            // 转换图片路径为base64格式
-                            character.background_path =
-                                Self::convert_image_path_to_base64(&character.background_path);
-                            characters.push(character);
+                let card_file = path.join("character.json");
+                let legacy_card_file = path.join("card.json");
+
+                let active_card_file = if card_file.exists() {
+                    card_file.clone()
+                } else if legacy_card_file.exists() {
+                    // 尝试迁移旧文件名
+                    match fs::rename(&legacy_card_file, &card_file) {
+                        Ok(_) => card_file.clone(),
+                        Err(err) => {
+                            eprintln!(
+                                "迁移 card.json -> character.json 失败，继续使用旧文件: {}",
+                                err
+                            );
+                            legacy_card_file.clone()
                         }
-                        Err(e) => eprintln!(
-                            "Failed to load character from {}: {}",
-                            card_file.display(),
-                            e
-                        ),
                     }
+                } else {
+                    continue;
+                };
+
+                match FileUtils::read_json_file::<CharacterData>(&active_card_file) {
+                    Ok(mut character) => {
+                        // 迁移旧数据并生成缩略图（写入新文件名）
+                        Self::migrate_character_assets(app_handle, &card_file, &mut character)?;
+
+                        // 返回给前端时使用绝对路径
+                        let mut response_character = character.clone();
+                        Self::apply_absolute_paths(app_handle, &mut response_character)?;
+                        characters.push(response_character);
+                    }
+                    Err(e) => eprintln!(
+                        "Failed to load character from {}: {}",
+                        active_card_file.display(),
+                        e
+                    ),
                 }
             }
         }
@@ -212,16 +383,29 @@ impl CharacterStorage {
         app_handle: &tauri::AppHandle,
         uuid: &str,
     ) -> Result<Option<CharacterData>, String> {
-        let card_file = Self::get_character_file_path(app_handle, uuid)?;
+        let mut card_file = Self::get_character_file_path(app_handle, uuid)?;
 
         if !card_file.exists() {
-            return Ok(None);
+            let legacy_card_file = Self::get_legacy_character_file_path(app_handle, uuid)?;
+            if legacy_card_file.exists() {
+                if let Err(err) = fs::rename(&legacy_card_file, &card_file) {
+                    eprintln!(
+                        "迁移 card.json -> character.json 失败，继续使用旧文件: {}",
+                        err
+                    );
+                    card_file = legacy_card_file;
+                }
+            } else {
+                return Ok(None);
+            }
         }
 
         let mut character = FileUtils::read_json_file::<CharacterData>(&card_file)?;
-        // 转换图片路径为base64格式
-        character.background_path = Self::convert_image_path_to_base64(&character.background_path);
-        Ok(Some(character))
+        Self::migrate_character_assets(app_handle, &card_file, &mut character)?;
+
+        let mut response = character.clone();
+        Self::apply_absolute_paths(app_handle, &mut response)?;
+        Ok(Some(response))
     }
 
     /// 创建新的角色卡
@@ -266,6 +450,7 @@ impl CharacterStorage {
             meta,
             card,
             background_path: String::new(),
+            thumbnail_path: String::new(),
         };
 
         // 保存角色卡文件
@@ -339,33 +524,35 @@ impl CharacterStorage {
         app_handle: &tauri::AppHandle,
         uuid: &str,
         image_data: &[u8],
-        extension: &str,
-    ) -> Result<String, String> {
-        let backgrounds_dir = Self::get_backgrounds_dir(app_handle)?;
-        let file_name = format!("{}_background.{}", uuid, extension);
-        let file_path = backgrounds_dir.join(&file_name);
+        _extension: &str,
+    ) -> Result<ImagePaths, String> {
+        let card_path = Self::get_card_image_path(app_handle, uuid)?;
+        let thumbnail_path = Self::get_thumbnail_image_path(app_handle, uuid)?;
 
-        // 保存图片文件
-        fs::write(&file_path, image_data)
-            .map_err(|e| format!("Failed to write background image: {}", e))?;
+        // 始终以 PNG 格式写入固定文件
+        Self::write_card_and_thumbnail(&card_path, &thumbnail_path, image_data)?;
 
-        // 转换为base64返回给前端
-        let base64_data = STANDARD.encode(image_data);
-        let mime_type = match extension {
-            "png" => "image/png",
-            "jpg" | "jpeg" => "image/jpeg",
-            "webp" => "image/webp",
-            _ => "image/png", // 默认
-        };
+        // 更新 JSON 中的路径为固定文件名
+        let card_file = Self::get_character_file_path(app_handle, uuid)?;
+        if card_file.exists() {
+            let mut character_data: CharacterData = FileUtils::read_json_file(&card_file)?;
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+            character_data.meta.updated_at = chrono::Utc::now().to_rfc3339();
+            FileUtils::write_json_file(&card_file, &character_data)?;
+        }
 
-        Ok(format!("data:{};base64,{}", mime_type, base64_data))
+        Ok(ImagePaths {
+            background_path: card_path.to_string_lossy().to_string(),
+            thumbnail_path: thumbnail_path.to_string_lossy().to_string(),
+        })
     }
 
     /// 更新角色背景图片路径
     pub fn update_character_background_path(
         app_handle: &tauri::AppHandle,
         uuid: &str,
-        background_path: &str,
+        _background_path: &str,
     ) -> Result<(), String> {
         let card_file = Self::get_character_file_path(app_handle, uuid)?;
 
@@ -375,8 +562,23 @@ impl CharacterStorage {
 
         let mut character_data: CharacterData = FileUtils::read_json_file(&card_file)?;
 
-        // 更新背景路径为base64格式和修改时间
-        character_data.background_path = background_path.to_string();
+        // 统一使用固定文件名，忽略传入的路径，保证一致性
+        let card_path = Self::get_card_image_path(app_handle, uuid)?;
+        let thumbnail_path = Self::get_thumbnail_image_path(app_handle, uuid)?;
+        if card_path.exists() {
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            // 确保缩略图存在
+            let _ = Self::ensure_thumbnail_from_card(&card_path, &thumbnail_path);
+        } else {
+            character_data.background_path.clear();
+        }
+
+        if thumbnail_path.exists() {
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+        } else {
+            character_data.thumbnail_path.clear();
+        }
+
         character_data.meta.updated_at = chrono::Utc::now().to_rfc3339();
 
         FileUtils::write_json_file(&card_file, &character_data)?;
@@ -405,24 +607,11 @@ impl CharacterStorage {
         let card_json = serde_json::to_string_pretty(&character.card)
             .map_err(|e| format!("序列化角色卡失败: {}", e))?;
 
-        // 检查是否有背景图片
-        let has_image = !character.background_path.is_empty();
+        let card_image_path = Self::get_card_image_path(app_handle, uuid)?;
 
-        if has_image {
-            // 从 base64 解码图片数据
-            let image_data = if character.background_path.starts_with("data:") {
-                // 提取 base64 部分
-                let parts: Vec<&str> = character.background_path.split(',').collect();
-                if parts.len() != 2 {
-                    return Err("无效的图片数据格式".to_string());
-                }
-                STANDARD.decode(parts[1])
-                    .map_err(|e| format!("解码图片数据失败: {}", e))?
-            } else {
-                // 如果是文件路径，读取文件
-                fs::read(&character.background_path)
-                    .map_err(|e| format!("读取背景图片失败: {}", e))?
-            };
+        if card_image_path.exists() {
+            let image_data = fs::read(&card_image_path)
+                .map_err(|e| format!("读取背景图片失败: {}", e))?;
 
             // 将角色卡数据写入 PNG
             let output_bytes = PngMetadataUtils::write_character_data_to_bytes(
@@ -489,27 +678,31 @@ impl CharacterStorage {
             updated_at: now,
         };
 
-        // 处理背景图片
-        let background_path = if is_png {
-            // 从 PNG 文件中提取背景图片
-            let base64_data = STANDARD.encode(&file_data);
-            format!("data:image/png;base64,{}", base64_data)
-        } else {
-            String::new()
-        };
-
-        let character_data = CharacterData {
+        let mut character_data = CharacterData {
             uuid: uuid.clone(),
             meta,
             card,
-            background_path,
+            background_path: String::new(),
+            thumbnail_path: String::new(),
         };
 
-        // 保存角色卡
+        // 保存角色卡及图片
         let card_file = Self::get_character_file_path(app_handle, &uuid)?;
+
+        if is_png {
+            let card_path = Self::get_card_image_path(app_handle, &uuid)?;
+            let thumbnail_path = Self::get_thumbnail_image_path(app_handle, &uuid)?;
+            Self::write_card_and_thumbnail(&card_path, &thumbnail_path, &file_data)?;
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+        }
+
         FileUtils::write_json_file(&card_file, &character_data)?;
 
-        Ok(character_data)
+        let mut response = character_data.clone();
+        Self::apply_absolute_paths(app_handle, &mut response)?;
+
+        Ok(response)
     }
 
     /// 从字节数据导入角色卡
@@ -552,26 +745,30 @@ impl CharacterStorage {
             updated_at: now,
         };
 
-        // 处理背景图片
-        let background_path = if file_name.ends_with(".png") {
-            // 从 PNG 文件中提取背景图片
-            let base64_data = STANDARD.encode(file_data);
-            format!("data:image/png;base64,{}", base64_data)
-        } else {
-            String::new()
-        };
-
-        let character_data = CharacterData {
+        let mut character_data = CharacterData {
             uuid: uuid.clone(),
             meta,
             card,
-            background_path,
+            background_path: String::new(),
+            thumbnail_path: String::new(),
         };
 
         // 保存角色卡
         let card_file = Self::get_character_file_path(app_handle, &uuid)?;
+
+        if file_name.ends_with(".png") {
+            let card_path = Self::get_card_image_path(app_handle, &uuid)?;
+            let thumbnail_path = Self::get_thumbnail_image_path(app_handle, &uuid)?;
+            Self::write_card_and_thumbnail(&card_path, &thumbnail_path, file_data)?;
+            character_data.background_path = CARD_FILE_NAME.to_string();
+            character_data.thumbnail_path = THUMBNAIL_FILE_NAME.to_string();
+        }
+
         FileUtils::write_json_file(&card_file, &character_data)?;
 
-        Ok(character_data)
+        let mut response = character_data.clone();
+        Self::apply_absolute_paths(app_handle, &mut response)?;
+
+        Ok(response)
     }
 }

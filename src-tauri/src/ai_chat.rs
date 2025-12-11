@@ -469,12 +469,14 @@ impl AIChatService {
                 Ok(resp) => Self::convert_response_from_openai(resp),
                 Err(err) => {
                     let err_msg = err.to_string();
-                    if err_msg.contains("failed to deserialize api response") {
+                    let lower = err_msg.to_lowercase();
+                    if lower.contains("deserialize") {
                         eprintln!(
-                            "⚠️ async-openai 解析响应失败，尝试回退至 reqwest: {}",
+                            "⚠️ async-openai 解析响应失败，尝试回退至 reqwest 捕获原始响应: {}",
                             err_msg
                         );
-                        Self::send_chat_request_via_http(api_config, request).await?
+                        // 回退到 HTTP，并打印原始响应
+                        Self::send_chat_request_via_http(api_config, request, true).await?
                     } else {
                         return Err(format!("API请求失败: {}", err_msg));
                     }
@@ -691,6 +693,7 @@ impl AIChatService {
     async fn send_chat_request_via_http(
         api_config: &ApiConfig,
         request: &ChatCompletionRequest,
+        debug_log_raw: bool,
     ) -> Result<ChatCompletionResponse, String> {
         let base_url = Self::normalize_api_base(&api_config.endpoint);
         let url = format!("{}/chat/completions", base_url);
@@ -709,9 +712,19 @@ impl AIChatService {
             .await
             .map_err(|e| format!("读取API响应失败: {}", e))?;
 
+        if debug_log_raw {
+            eprintln!("=== 回退 HTTP 原始响应 ===");
+            eprintln!("{}", body);
+        }
+
         if status.is_success() {
-            serde_json::from_str::<ChatCompletionResponse>(&body)
-                .map_err(|e| format!("API响应解析失败: {} - {}", e, body))
+            match serde_json::from_str::<ChatCompletionResponse>(&body) {
+                Ok(parsed) => Ok(parsed),
+                Err(e) => {
+                    Self::log_response_body_debug(&body);
+                    Err(format!("API响应解析失败: {} - {}", e, body))
+                }
+            }
         } else {
             eprintln!(
                 "⚠️ API返回非成功状态，status={}, body={}",
@@ -788,6 +801,29 @@ impl AIChatService {
             serde_json::Value::Number(n) => Some(n.to_string()),
             serde_json::Value::Bool(b) => Some(b.to_string()),
             _ => None,
+        }
+    }
+
+    fn log_response_body_debug(body: &str) {
+        let truncated = if body.len() > 2000 {
+            format!("{}...[truncated {} chars]", &body[..2000], body.len() - 2000)
+        } else {
+            body.to_string()
+        };
+
+        eprintln!("=== 原始响应（解析失败） ===");
+        eprintln!("{}", truncated);
+
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+            if let Ok(pretty) = serde_json::to_string_pretty(&json) {
+                eprintln!("=== 原始响应 JSON 格式化 ===");
+                eprintln!("{}", pretty);
+            }
+
+            if let Some(choices) = json.get("choices") {
+                eprintln!("=== choices 片段 ===");
+                eprintln!("{}", choices);
+            }
         }
     }
 }

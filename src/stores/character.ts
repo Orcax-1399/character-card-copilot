@@ -177,15 +177,16 @@ export const useCharacterStore = defineStore('character', () => {
    * 上传背景图片
    */
   async function uploadBackgroundImage(uuid: string, file: File) {
-    const backgroundPath = await characterStorage.uploadBackgroundImage(uuid, file)
+    const paths = await characterStorage.uploadBackgroundImage(uuid, file)
 
     // 更新缓存中的数据
     const character = characters.value.find(c => c.uuid === uuid)
     if (character) {
-      character.backgroundPath = backgroundPath
+      character.backgroundPath = paths.backgroundPath
+      character.thumbnailPath = paths.thumbnailPath
     }
 
-    return backgroundPath
+    return paths
   }
 
   /**
@@ -198,6 +199,7 @@ export const useCharacterStore = defineStore('character', () => {
     const character = characters.value.find(c => c.uuid === uuid)
     if (character) {
       character.backgroundPath = backgroundPath
+      character.thumbnailPath = character.thumbnailPath || backgroundPath
     }
   }
 
